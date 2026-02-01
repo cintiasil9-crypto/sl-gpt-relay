@@ -1,75 +1,47 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-import os
-import random
+import os, random
 
 app = Flask(__name__)
-
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 # -------------------------------------------------
-# HUMOR ROTATION PROMPTS
+# ROTATING HUMOR PERSONAS
 # -------------------------------------------------
 
-HUMOR_PROMPTS = [
+HUMOR_STYLES = [
+
     # Dry observer
     """
 You are a dry, observant social commentator.
-Subtle humor. Slightly unimpressed.
+You notice patterns and small behaviors and describe them
+with subtle, slightly unimpressed humor.
 
 Rules:
+- Observational, not hostile
 - No insults
 - No protected traits
 - No mental health terms
-- Observational, not hostile
-
-Output format:
-Archetype: <short title>
-Description: <one dry sentence>
+- Do not invent topics
 """,
 
     # Internet sarcastic
     """
 You are extremely online and it shows.
-
-Tone:
-- Internet sarcasm
-- Meme-adjacent
-- Light judgment
+You speak with internet-native sarcasm and meme-adjacent phrasing,
+but you are never cruel.
 
 Rules:
-- No insults
+- Witty, not insulting
 - No protected traits
-- No cruelty
-
-Output format:
-Archetype: <short title>
-Description: <one sarcastic sentence>
+- No mental health terms
+- Keep it playful
 """,
 
-    # Playfully judgmental
-    """
-You are playfully judgmental but never cruel.
-
-Tone:
-- Confident
-- Funny because it’s accurate
-- Light roast energy
-
-Rules:
-- No insults
-- No protected traits
-- No harassment
-
-Output format:
-Archetype: <short title>
-Description: <one funny sentence>
-""",
-
-    # Mock official
+    # Mock official / analyst
     """
 You speak like an overly serious official report
-about extremely unserious behavior.
+analyzing a very unserious social situation.
 
 Tone:
 - Formal
@@ -79,82 +51,113 @@ Tone:
 Rules:
 - No insults
 - No protected traits
+- No mental health terms
+""",
 
-Output format:
-Archetype: <short title>
-Description: <one mock-serious sentence>
+    # Playful instigator (safe)
+    """
+You enjoy lightly stirring interaction.
+You highlight behavior in a way that invites replies,
+without embarrassing or targeting.
+
+Rules:
+- Light sarcasm allowed
+- No insults
+- No protected traits
+- No mental health terms
 """
 ]
 
 # -------------------------------------------------
-# TALKER ANALYSIS ENDPOINT
+# TALKER ANALYSIS
 # -------------------------------------------------
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.json or {}
     stats = data.get("stats", {})
+    context = data.get("context", "")
 
-    base_prompt = random.choice(HUMOR_PROMPTS)
+    persona = random.choice(HUMOR_STYLES)
 
     prompt = f"""
-{base_prompt}
+{persona}
+
+You are generating a humorous but accurate social archetype
+for ONE person in a group chat.
+
+You MUST base your output primarily on what was actually discussed.
+
+Conversation (5-minute window):
+{context}
 
 Behavior metrics:
 Messages: {stats.get("messages")}
-Average Length: {stats.get("avg_length")}
 Caps Ratio: {stats.get("caps_ratio")}
-Gesture Ratio: {stats.get("gesture_ratio")}
+Short Message Ratio: {stats.get("short_ratio")}
 Question Ratio: {stats.get("question_ratio")}
+
+Rules (do not break):
+- Must reflect the real conversation
+- Light sarcasm is allowed
+- No insults
+- No protected traits
+- No mental health terms
+- No sexual content
+- Do not invent motivations or topics
+
+Return EXACTLY:
+Archetype: <short title>
+Description: <one sentence>
 """
 
-    response = client.chat.completions.create(
+    res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "system", "content": prompt}],
         max_tokens=80
     )
 
     return jsonify({
-        "result": response.choices[0].message.content.strip()
+        "result": res.choices[0].message.content.strip()
     })
 
 # -------------------------------------------------
-# SILENT SPOTLIGHT ENDPOINT
+# SILENT SPOTLIGHT
 # -------------------------------------------------
 
 @app.route("/silent", methods=["POST"])
 def silent():
-    data = request.json or {}
-    seconds = int(data.get("seconds_present", 0))
+    persona = random.choice([
+        "Dry observer.",
+        "Lightly sarcastic but kind.",
+        "Mock-serious and dramatic.",
+        "Playfully observant."
+    ])
 
     prompt = f"""
-You are making a short, funny, observational callout
-about someone who has been present but silent in a social space.
+You are making a funny, observational remark about someone
+who has been present but silent in a social space.
 
 Tone:
-- Witty
-- Light sarcasm
-- Observational
+{persona}
 
 Rules:
 - One sentence only
-- No insults
+- Light humor
 - No accusations
-- No motives (no "watching", "judging", "creeping")
+- No insults
 - No protected traits
 - No mental health terms
-
-They have been present for {seconds} seconds.
 """
 
-    response = client.chat.completions.create(
+    res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "system", "content": prompt}],
         max_tokens=40
     )
 
     return jsonify({
-        "line": response.choices[0].message.content.strip()
+        "line": res.choices[0].message.content.strip()
     })
 
 # -------------------------------------------------
@@ -162,14 +165,5 @@ They have been present for {seconds} seconds.
 # -------------------------------------------------
 
 @app.route("/")
-def health():
+def ok():
     return "OK"
-
-# -------------------------------------------------
-# LOCAL DEV ONLY
-# -------------------------------------------------
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
-
-
