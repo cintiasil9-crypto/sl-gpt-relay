@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import os, random
+import requests
+
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -167,3 +169,4 @@ Rules:
 @app.route("/")
 def ok():
     return "OK"
+
