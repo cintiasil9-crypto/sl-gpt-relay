@@ -1,78 +1,67 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-import os, random
+import os
+import random
+import math
+import time
 import requests
 
+# =================================================
+# APP SETUP
+# =================================================
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-# -------------------------------------------------
-# ROTATING HUMOR PERSONAS
-# -------------------------------------------------
+GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
+GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
+
+# =================================================
+# TIME DECAY
+# =================================================
+
+def decay_weight(timestamp_utc):
+    now = int(time.time())
+    age_seconds = now - int(timestamp_utc)
+    age_days = age_seconds / 86400
+
+    if age_days <= 1:
+        return 1.0
+    elif age_days <= 7:
+        return 0.6
+    else:
+        return 0.3
+
+# =================================================
+# HUMOR PERSONAS (GPT)
+# =================================================
 
 HUMOR_STYLES = [
-
-    # Dry observer
     """
 You are a dry, observant social commentator.
-You notice patterns and small behaviors and describe them
-with subtle, slightly unimpressed humor.
-
-Rules:
-- Observational, not hostile
-- No insults
-- No protected traits
-- No mental health terms
-- Do not invent topics
+Subtle, unimpressed humor.
+No insults. No protected traits. No mental health terms.
 """,
-
-    # Internet sarcastic
     """
-You are extremely online and it shows.
-You speak with internet-native sarcasm and meme-adjacent phrasing,
-but you are never cruel.
-
-Rules:
-- Witty, not insulting
-- No protected traits
-- No mental health terms
-- Keep it playful
+Internet-native sarcasm.
+Playful, not cruel.
+No protected traits. No mental health terms.
 """,
-
-    # Mock official / analyst
     """
-You speak like an overly serious official report
-analyzing a very unserious social situation.
-
-Tone:
-- Formal
-- Deadpan
-- Bureaucratic humor
-
-Rules:
-- No insults
-- No protected traits
-- No mental health terms
+Mock-official analytical tone.
+Dry and bureaucratic.
+No insults or protected traits.
 """,
-
-    # Playful instigator (safe)
     """
-You enjoy lightly stirring interaction.
-You highlight behavior in a way that invites replies,
-without embarrassing or targeting.
-
-Rules:
-- Light sarcasm allowed
-- No insults
-- No protected traits
-- No mental health terms
+Light instigation that invites replies.
+Never embarrassing.
+No protected traits.
 """
 ]
 
-# -------------------------------------------------
-# TALKER ANALYSIS
-# -------------------------------------------------
+# =================================================
+# GPT ANALYSIS
+# =================================================
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -85,28 +74,14 @@ def analyze():
     prompt = f"""
 {persona}
 
-You are generating a humorous but accurate social archetype
-for ONE person in a group chat.
-
-You MUST base your output primarily on what was actually discussed.
-
-Conversation (5-minute window):
+Conversation:
 {context}
 
-Behavior metrics:
+Metrics:
 Messages: {stats.get("messages")}
-Caps Ratio: {stats.get("caps_ratio")}
-Short Message Ratio: {stats.get("short_ratio")}
-Question Ratio: {stats.get("question_ratio")}
-
-Rules (do not break):
-- Must reflect the real conversation
-- Light sarcasm is allowed
-- No insults
-- No protected traits
-- No mental health terms
-- No sexual content
-- Do not invent motivations or topics
+Caps: {stats.get("caps_ratio")}
+Short: {stats.get("short_ratio")}
+Questions: {stats.get("question_ratio")}
 
 Return EXACTLY:
 Archetype: <short title>
@@ -119,37 +94,25 @@ Description: <one sentence>
         max_tokens=80
     )
 
-    return jsonify({
-        "result": res.choices[0].message.content.strip()
-    })
+    return jsonify({"result": res.choices[0].message.content.strip()})
 
-# -------------------------------------------------
+# =================================================
 # SILENT SPOTLIGHT
-# -------------------------------------------------
+# =================================================
 
 @app.route("/silent", methods=["POST"])
 def silent():
     persona = random.choice([
         "Dry observer.",
-        "Lightly sarcastic but kind.",
-        "Mock-serious and dramatic.",
+        "Light sarcasm.",
+        "Mock-serious.",
         "Playfully observant."
     ])
 
     prompt = f"""
-You are making a funny, observational remark about someone
-who has been present but silent in a social space.
-
-Tone:
-{persona}
-
-Rules:
-- One sentence only
-- Light humor
-- No accusations
-- No insults
-- No protected traits
-- No mental health terms
+One sentence.
+Funny, observational.
+Tone: {persona}
 """
 
     res = client.chat.completions.create(
@@ -158,61 +121,82 @@ Rules:
         max_tokens=40
     )
 
-    return jsonify({
-        "line": res.choices[0].message.content.strip()
-    })
-# -------------------------------------------------
-# DATA COLLECTOR (NO AI)
-# -------------------------------------------------
+    return jsonify({"line": res.choices[0].message.content.strip()})
 
-GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
+# =================================================
+# DATA COLLECTOR
+# =================================================
 
 @app.route("/collect", methods=["POST"])
 def collect():
     data = request.get_json(silent=True)
 
     if not data:
-        return jsonify({"error": "No JSON received"}), 400
-
+        return jsonify({"error": "No JSON"}), 400
     if not GOOGLE_SHEET_ENDPOINT:
-        return jsonify({"error": "Google endpoint not configured"}), 500
+        return jsonify({"error": "Sheet endpoint missing"}), 500
 
     try:
-        r = requests.post(
-            GOOGLE_SHEET_ENDPOINT,
-            json=data,
-            timeout=10
-        )
-
+        r = requests.post(GOOGLE_SHEET_ENDPOINT, json=data, timeout=10)
         if r.status_code != 200:
-            return jsonify({
-                "error": "Google Sheet error",
-                "status": r.status_code,
-                "body": r.text
-            }), 500
-
+            return jsonify({"error": "Sheet write failed"}), 500
         return jsonify({"status": "ok"})
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# =================================================
+# PROFILE ENGINE (25 TRAITS + DECAY)
+# =================================================
+
+TRAIT_DESCRIPTIONS = {
+    "curious": "Frequently asks questions and explores topics",
+    "declarative": "Makes statements rather than asking",
+    "initiator": "Initiates interaction",
+    "responsive": "Primarily responds to others",
+    "brief": "Uses short messages",
+    "verbose": "Uses longer messages",
+    "expressive": "Uses emphasis or intensity",
+    "measured": "Maintains controlled tone",
+
+    "supportive": "Offers help or reassurance",
+    "people_pleasing": "Smooths or validates interactions",
+    "challenging": "Pushes back on statements",
+    "non_confrontational": "Avoids conflict",
+    "connector": "Bridges social interaction",
+    "independent": "Speaks without social reliance",
+    "agreeable": "Shows agreement over opposition",
+
+    "humorous": "Uses humor socially",
+    "serious": "Keeps a focused tone",
+    "playful": "Humor + initiation",
+    "reserved": "Speaks selectively",
+    "energetic": "High engagement and emphasis",
+    "low_key": "Calm presence",
+
+    "engaged": "Participates consistently",
+    "selective": "Rare but intentional speech",
+    "observer": "Mostly silent presence",
+    "dominant_presence": "Commands attention"
+}
 
 @app.route("/build_profiles", methods=["POST"])
 def build_profiles():
     if not GOOGLE_PROFILES_FEED:
-        return jsonify({"error": "Profiles feed not configured"}), 500
+        return jsonify({"error": "Profiles feed missing"}), 500
 
-    rows = requests.get(GOOGLE_PROFILES_FEED, timeout=15).json()
-
+    rows = requests.get(GOOGLE_PROFILES_FEED, timeout=20).json()
     profiles = {}
 
+    # ---------- Aggregate ----------
     for r in rows:
         uuid = r["avatar_uuid"]
-        msgs = max(int(r["messages"]), 1)
+        weight = decay_weight(r["timestamp_utc"])
+        msgs = max(int(r["messages"]), 1) * weight
 
         if uuid not in profiles:
             profiles[uuid] = {
                 "display_name": r["display_name"],
-                "totals": {
+                "t": {
                     "messages": 0,
                     "attention": 0,
                     "pleasing": 0,
@@ -226,54 +210,81 @@ def build_profiles():
                 }
             }
 
-        p = profiles[uuid]["totals"]
+        t = profiles[uuid]["t"]
 
-        p["messages"] += msgs
-        p["attention"] += int(r["kw_attention"])
-        p["pleasing"] += int(r["kw_pleasing"])
-        p["combative"] += int(r["kw_combative"])
-        p["curious"] += int(r["kw_curious"]) + int(r["questions"])
-        p["dominant"] += int(r["kw_dominant"])
-        p["humor"] += int(r["kw_humor"])
-        p["supportive"] += int(r["kw_supportive"])
-        p["caps"] += int(r["caps"])
-        p["short"] += int(r["short_msgs"])
+        t["messages"] += msgs
+        t["attention"] += int(r["kw_attention"]) * weight
+        t["pleasing"] += int(r["kw_pleasing"]) * weight
+        t["combative"] += int(r["kw_combative"]) * weight
+        t["curious"] += (int(r["kw_curious"]) + int(r["questions"])) * weight
+        t["dominant"] += int(r["kw_dominant"]) * weight
+        t["humor"] += int(r["kw_humor"]) * weight
+        t["supportive"] += int(r["kw_supportive"]) * weight
+        t["caps"] += int(r["caps"]) * weight
+        t["short"] += int(r["short_msgs"]) * weight
 
+    # ---------- Derive Traits ----------
     results = {}
 
     for uuid, p in profiles.items():
-        m = max(p["totals"]["messages"], 1)
+        t = p["t"]
+        m = max(t["messages"], 1)
 
-        scores = {
-            "attention_seeking": p["totals"]["attention"] / m,
-            "people_pleasing": p["totals"]["pleasing"] / m,
-            "combative": p["totals"]["combative"] / m,
-            "curious": p["totals"]["curious"] / m,
-            "dominant": p["totals"]["dominant"] / m,
-            "humorous": p["totals"]["humor"] / m,
-            "supportive": p["totals"]["supportive"] / m,
-            "expressive": p["totals"]["caps"] / m,
-            "brief": p["totals"]["short"] / m
+        traits = {
+            "curious": t["curious"] / m,
+            "declarative": t["dominant"] / m,
+            "initiator": t["attention"] / m,
+            "responsive": 1 - (t["attention"] / m),
+            "brief": t["short"] / m,
+            "verbose": 1 - (t["short"] / m),
+            "expressive": t["caps"] / m,
+            "measured": 1 - ((t["caps"] + t["short"]) / (2 * m)),
+
+            "supportive": t["supportive"] / m,
+            "people_pleasing": t["pleasing"] / m,
+            "challenging": t["combative"] / m,
+            "non_confrontational": 1 - (t["combative"] / m),
+            "connector": (t["supportive"] + t["pleasing"]) / m,
+            "independent": 1 - ((t["supportive"] + t["pleasing"]) / (2 * m)),
+            "agreeable": (t["pleasing"] + (m - t["combative"])) / (2 * m),
+
+            "humorous": t["humor"] / m,
+            "serious": 1 - (t["humor"] / m),
+            "playful": (t["humor"] + t["attention"]) / (2 * m),
+            "reserved": 1 - ((t["attention"] + t["caps"]) / (2 * m)),
+            "energetic": (t["caps"] + t["attention"]) / (2 * m),
+            "low_key": 1 - ((t["caps"] + t["attention"]) / (2 * m)),
+
+            "engaged": math.log(m + 1) / 5,
+            "selective": (m <= 5) * (1 - t["attention"] / m),
+            "observer": (m <= 3) * (1 - t["attention"] / m),
+            "dominant_presence": (t["dominant"] + t["caps"] + m) / (3 * m)
         }
 
-        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:5]
+        for k in traits:
+            traits[k] = max(0.0, min(1.0, traits[k]))
+
+        top = sorted(traits.items(), key=lambda x: x[1], reverse=True)[:5]
 
         results[uuid] = {
-            "display_name": profiles[uuid]["display_name"],
-            "top_traits": top,
-            "confidence": min(1.0, math.log(m + 1) / 5)
+            "display_name": p["display_name"],
+            "confidence": round(min(1.0, math.log(m + 1) / 5), 2),
+            "top_traits": [
+                {
+                    "trait": name,
+                    "score": round(score, 2),
+                    "description": TRAIT_DESCRIPTIONS[name]
+                }
+                for name, score in top
+            ]
         }
 
     return jsonify(results)
 
-
-# -------------------------------------------------
-# HEALTH CHECK
-# -------------------------------------------------
+# =================================================
+# HEALTH
+# =================================================
 
 @app.route("/")
 def ok():
     return "OK"
-
-
-
