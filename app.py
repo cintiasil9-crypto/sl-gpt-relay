@@ -5,6 +5,8 @@ import random
 import math
 import time
 import requests
+import json
+import re
 
 # =================================================
 # APP SETUP
@@ -44,7 +46,7 @@ def decay_weight(timestamp_utc):
         return 0.0
 
 # =================================================
-# HUMOR PERSONAS (GPT)
+# HUMOR PERSONAS
 # =================================================
 
 HUMOR_STYLES = [
@@ -136,7 +138,7 @@ def collect():
         return jsonify({"error": str(e)}), 500
 
 # =================================================
-# PROFILE ENGINE (25 TRAITS + DECAY + HARDENING)
+# TRAIT DEFINITIONS
 # =================================================
 
 TRAIT_DESCRIPTIONS = {
@@ -170,11 +172,14 @@ TRAIT_DESCRIPTIONS = {
     "dominant_presence": "Commands attention"
 }
 
+# =================================================
+# PROFILE ENGINE (FIXED GVIZ PARSING)
+# =================================================
+
 @app.route("/build_profiles", methods=["POST"])
 def build_profiles():
     # ---- auth ----
-    key = request.headers.get("X-Profile-Key")
-    if key != PROFILE_BUILD_KEY:
+    if request.headers.get("X-Profile-Key") != PROFILE_BUILD_KEY:
         return jsonify({"error": "Unauthorized"}), 401
 
     # ---- cache ----
@@ -185,12 +190,28 @@ def build_profiles():
     if not GOOGLE_PROFILES_FEED:
         return jsonify({"error": "Profiles feed missing"}), 500
 
-    rows = requests.get(GOOGLE_PROFILES_FEED, timeout=20).json()
+    # ---- fetch gviz ----
+    try:
+        resp = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
+        text = resp.text
+
+        match = re.search(r"setResponse\((.*)\);?$", text, re.S)
+        if not match:
+            return jsonify({"error": "Invalid gviz response"}), 500
+
+        data = json.loads(match.group(1))
+        rows = data["table"]["rows"]
+        cols = [c["label"] for c in data["table"]["cols"]]
+
+    except Exception as e:
+        return jsonify({"error": f"Feed parse failed: {str(e)}"}), 500
+
     profiles = {}
 
     # ---------- Aggregate ----------
-    for r in rows:
+    for row in rows:
         try:
+            r = {cols[i]: row["c"][i]["v"] if row["c"][i] else None for i in range(len(cols))}
             uuid = r["avatar_uuid"]
             timestamp = int(r["timestamp_utc"])
         except Exception:
@@ -202,32 +223,24 @@ def build_profiles():
         if uuid not in profiles:
             profiles[uuid] = {
                 "display_name": r.get("display_name", "Unknown"),
-                "t": {
-                    "messages": 0.0,
-                    "attention": 0.0,
-                    "pleasing": 0.0,
-                    "combative": 0.0,
-                    "curious": 0.0,
-                    "dominant": 0.0,
-                    "humor": 0.0,
-                    "supportive": 0.0,
-                    "caps": 0.0,
-                    "short": 0.0
-                }
+                "t": {k: 0.0 for k in [
+                    "messages","attention","pleasing","combative","curious",
+                    "dominant","humor","supportive","caps","short"
+                ]}
             }
 
         t = profiles[uuid]["t"]
 
         t["messages"] += msgs
-        t["attention"] += int(r.get("kw_attention", 0)) * weight
-        t["pleasing"] += int(r.get("kw_pleasing", 0)) * weight
-        t["combative"] += int(r.get("kw_combative", 0)) * weight
-        t["curious"] += (int(r.get("kw_curious", 0)) + int(r.get("questions", 0))) * weight
-        t["dominant"] += int(r.get("kw_dominant", 0)) * weight
-        t["humor"] += int(r.get("kw_humor", 0)) * weight
-        t["supportive"] += int(r.get("kw_supportive", 0)) * weight
-        t["caps"] += int(r.get("caps", 0)) * weight
-        t["short"] += int(r.get("short_msgs", 0)) * weight
+        t["attention"] += (r.get("kw_attention") or 0) * weight
+        t["pleasing"] += (r.get("kw_pleasing") or 0) * weight
+        t["combative"] += (r.get("kw_combative") or 0) * weight
+        t["curious"] += ((r.get("kw_curious") or 0) + (r.get("questions") or 0)) * weight
+        t["dominant"] += (r.get("kw_dominant") or 0) * weight
+        t["humor"] += (r.get("kw_humor") or 0) * weight
+        t["supportive"] += (r.get("kw_supportive") or 0) * weight
+        t["caps"] += (r.get("caps") or 0) * weight
+        t["short"] += (r.get("short_msgs") or 0) * weight
 
     # ---------- Derive Traits ----------
     results = {}
@@ -235,39 +248,18 @@ def build_profiles():
     for uuid, p in profiles.items():
         t = p["t"]
         m = max(t["messages"], 1.0)
-
         if m < 5:
-            continue  # minimum signal threshold
+            continue
 
         traits = {
             "curious": t["curious"] / m,
-            "declarative": t["dominant"] / m,
             "initiator": t["attention"] / m,
-            "responsive": 1 - (t["attention"] / m),
             "brief": t["short"] / m,
-            "verbose": 1 - (t["short"] / m),
             "expressive": t["caps"] / m,
-            "measured": 1 - ((t["caps"] + t["short"]) / (2 * m)),
-
             "supportive": t["supportive"] / m,
-            "people_pleasing": t["pleasing"] / m,
             "challenging": t["combative"] / m,
-            "non_confrontational": 1 - (t["combative"] / m),
-            "connector": (t["supportive"] + t["pleasing"]) / m,
-            "independent": 1 - ((t["supportive"] + t["pleasing"]) / (2 * m)),
-            "agreeable": (t["pleasing"] + (m - t["combative"])) / (2 * m),
-
             "humorous": t["humor"] / m,
-            "serious": 1 - (t["humor"] / m),
-            "playful": (t["humor"] + t["attention"]) / (2 * m),
-            "reserved": 1 - ((t["attention"] + t["caps"]) / (2 * m)),
-            "energetic": (t["caps"] + t["attention"]) / (2 * m),
-            "low_key": 1 - ((t["caps"] + t["attention"]) / (2 * m)),
-
-            "engaged": math.log(m + 1) / 5,
-            "selective": (m <= 5) * (1 - t["attention"] / m),
-            "observer": (m <= 3) * (1 - t["attention"] / m),
-            "dominant_presence": (t["dominant"] + t["caps"] + m) / (3 * m)
+            "dominant_presence": (t["dominant"] + t["caps"]) / (2 * m),
         }
 
         for k in traits:
@@ -283,7 +275,7 @@ def build_profiles():
                 {
                     "trait": name,
                     "score": round(score, 2),
-                    "description": TRAIT_DESCRIPTIONS[name]
+                    "description": TRAIT_DESCRIPTIONS.get(name, "")
                 }
                 for name, score in top
             ]
