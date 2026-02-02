@@ -161,6 +161,40 @@ Rules:
     return jsonify({
         "line": res.choices[0].message.content.strip()
     })
+# -------------------------------------------------
+# DATA COLLECTOR (NO AI)
+# -------------------------------------------------
+
+GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
+
+@app.route("/collect", methods=["POST"])
+def collect():
+    data = request.get_json(silent=True)
+
+    if not data:
+        return jsonify({"error": "No JSON received"}), 400
+
+    if not GOOGLE_SHEET_ENDPOINT:
+        return jsonify({"error": "Google endpoint not configured"}), 500
+
+    try:
+        r = requests.post(
+            GOOGLE_SHEET_ENDPOINT,
+            json=data,
+            timeout=10
+        )
+
+        if r.status_code != 200:
+            return jsonify({
+                "error": "Google Sheet error",
+                "status": r.status_code,
+                "body": r.text
+            }), 500
+
+        return jsonify({"status": "ok"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # -------------------------------------------------
 # HEALTH CHECK
@@ -169,4 +203,5 @@ Rules:
 @app.route("/")
 def ok():
     return "OK"
+
 
