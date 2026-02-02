@@ -1,9 +1,7 @@
 from flask import Flask, request, jsonify
-from openai import OpenAI
 import os
 import time
 import math
-import random
 import requests
 import json
 import re
@@ -13,7 +11,6 @@ import re
 # =================================================
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
 PROFILE_BUILD_KEY = os.environ.get("PROFILE_BUILD_KEY")
@@ -23,31 +20,42 @@ PROFILE_BUILD_KEY = os.environ.get("PROFILE_BUILD_KEY")
 # =================================================
 
 PROFILE_CACHE = {"data": {}, "ts": 0}
-CACHE_TTL = 300  # seconds
+CACHE_TTL = 300
 
 # =================================================
-# GVIZ PARSER (THIS IS THE IMPORTANT PART)
+# GVIZ FETCH (NO CRASH VERSION)
 # =================================================
 
-def fetch_gviz_rows(url):
-    r = requests.get(url, timeout=20)
-    r.raise_for_status()
+def fetch_gviz_debug(url):
+    """
+    Fetches Google GVIZ and returns diagnostics instead of crashing.
+    """
+    try:
+        r = requests.get(url, timeout=20)
+        text = r.text.strip()
 
-    text = r.text.strip()
+        return {
+            "http_status": r.status_code,
+            "content_type": r.headers.get("content-type"),
+            "starts_with": text[:60],
+            "raw_preview": text[:300],
+            "is_gviz": text.startswith("google.visualization"),
+        }
+    except Exception as e:
+        return {
+            "error": str(e)
+        }
 
-    # Must be Google Visualization JS, not JSON
-    if not text.startswith("google.visualization"):
-        raise ValueError("Invalid gviz response")
-
-    # Strip JS wrapper
-    match = re.search(r"setResponse\((.*)\);?$", text, re.S)
+def parse_gviz(text):
+    """
+    Strict parser. Raises ValueError on failure.
+    """
+    match = re.search(r"setResponse\((.*)\)\s*;?\s*$", text, re.S)
     if not match:
-        raise ValueError("GVIZ payload not found")
+        raise ValueError("GVIZ wrapper not found")
 
     payload = json.loads(match.group(1))
     table = payload.get("table", {})
-
-    # Use column IDs (labels are often empty)
     cols = [(c.get("id") or c.get("label")) for c in table.get("cols", [])]
 
     rows = []
@@ -60,22 +68,19 @@ def fetch_gviz_rows(url):
     return rows
 
 # =================================================
-# TIME DECAY
+# TEST ENDPOINT (THIS IS THE KEY)
 # =================================================
 
-def decay_weight(ts):
-    try:
-        age_days = (time.time() - int(ts)) / 86400
-        if age_days <= 1:
-            return 1.0
-        elif age_days <= 7:
-            return 0.6
-        return 0.3
-    except:
-        return 0.0
+@app.route("/test_gviz", methods=["GET"])
+def test_gviz():
+    if not GOOGLE_PROFILES_FEED:
+        return jsonify({"error": "GOOGLE_PROFILES_FEED missing"}), 500
+
+    info = fetch_gviz_debug(GOOGLE_PROFILES_FEED)
+    return jsonify(info)
 
 # =================================================
-# PROFILE ENGINE (NO CRASH VERSION)
+# PROFILE ENGINE (SAFE MODE)
 # =================================================
 
 @app.route("/build_profiles", methods=["POST"])
@@ -94,68 +99,57 @@ def build_profiles():
     if not GOOGLE_PROFILES_FEED:
         return jsonify({"error": "Profiles feed missing"}), 500
 
+    # ---- FETCH ----
     try:
-        rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
+        r = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
+        text = r.text.strip()
     except Exception as e:
-        # IMPORTANT: return JSON, not crash
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Fetch failed", "detail": str(e)}), 500
+
+    # ---- VERIFY GVIZ ----
+    if not text.startswith("google.visualization"):
+        return jsonify({
+            "error": "Not GVIZ",
+            "preview": text[:200]
+        }), 500
+
+    # ---- PARSE ----
+    try:
+        rows = parse_gviz(text)
+    except Exception as e:
+        return jsonify({
+            "error": "GVIZ parse failed",
+            "detail": str(e)
+        }), 500
 
     profiles = {}
 
-    # ---------- Aggregate ----------
     for r in rows:
         try:
             uuid = r["avatar_uuid"]
             ts = int(float(r["timestamp_utc"]))
-        except:
+        except Exception:
             continue
 
-        weight = decay_weight(ts)
-        msgs = max(float(r.get("messages", 0)), 1.0) * weight
+        msgs = max(float(r.get("messages", 0)), 1.0)
 
         p = profiles.setdefault(uuid, {
             "display_name": r.get("display_name", "Unknown"),
-            "t": {
-                "messages": 0.0,
-                "curious": 0.0,
-                "dominant": 0.0,
-                "supportive": 0.0,
-                "humor": 0.0,
-                "caps": 0.0
-            }
+            "messages": 0.0
         })
 
-        t = p["t"]
-        t["messages"] += msgs
-        t["curious"] += float(r.get("kw_curious", 0)) * weight
-        t["dominant"] += float(r.get("kw_dominant", 0)) * weight
-        t["supportive"] += float(r.get("kw_supportive", 0)) * weight
-        t["humor"] += float(r.get("kw_humor", 0)) * weight
-        t["caps"] += float(r.get("caps", 0)) * weight
+        p["messages"] += msgs
 
-    # ---------- Build Results ----------
     results = {}
 
     for uuid, p in profiles.items():
-        m = p["t"]["messages"]
-        if m < 5:
+        if p["messages"] < 5:
             continue
-
-        traits = {
-            "curious": p["t"]["curious"] / m,
-            "dominant": (p["t"]["dominant"] + p["t"]["caps"]) / (2 * m),
-            "supportive": p["t"]["supportive"] / m,
-            "humorous": p["t"]["humor"] / m
-        }
 
         results[uuid] = {
             "display_name": p["display_name"],
-            "confidence": round(min(1.0, math.log(m + 1) / 5), 2),
-            "top_traits": sorted(
-                [{"trait": k, "score": round(v, 2)} for k, v in traits.items()],
-                key=lambda x: x["score"],
-                reverse=True
-            )
+            "confidence": round(min(1.0, math.log(p["messages"] + 1) / 5), 2),
+            "top_traits": []
         }
 
     PROFILE_CACHE["data"] = results
