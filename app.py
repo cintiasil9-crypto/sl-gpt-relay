@@ -1,36 +1,65 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import os
-import time
-import math
 import random
+import math
+import time
 import requests
 import json
+import re
 
 # =================================================
 # APP SETUP
 # =================================================
 
 app = Flask(__name__)
-
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY")
-)
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
 GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
 PROFILE_BUILD_KEY = os.environ.get("PROFILE_BUILD_KEY")
 
 # =================================================
-# CACHE
+# SIMPLE IN-MEMORY CACHE
 # =================================================
 
-PROFILE_CACHE = {
-    "data": None,
-    "ts": 0
-}
-
+PROFILE_CACHE = {"data": None, "ts": 0}
 CACHE_TTL = 300  # seconds
+
+# =================================================
+# UTIL: PARSE GVIZ RESPONSE (THIS IS THE FIX)
+# =================================================
+
+def fetch_gviz_rows(url):
+    """
+    Google GVIZ returns JS, not JSON.
+    This function extracts and parses the real payload safely.
+    """
+    r = requests.get(url, timeout=20)
+    text = r.text.strip()
+
+    # Guardrail: Google error pages
+    if not text.startswith("google.visualization"):
+        raise ValueError("Invalid gviz response")
+
+    # Extract JSON inside setResponse(...)
+    match = re.search(r"setResponse\((.*)\);?$", text, re.S)
+    if not match:
+        raise ValueError("GVIZ payload not found")
+
+    payload = json.loads(match.group(1))
+    table = payload["table"]
+
+    cols = [c["label"] for c in table["cols"]]
+    rows = []
+
+    for r in table["rows"]:
+        row = {}
+        for i, cell in enumerate(r["c"]):
+            row[cols[i]] = cell["v"] if cell else None
+        rows.append(row)
+
+    return rows
 
 # =================================================
 # TIME DECAY
@@ -38,7 +67,8 @@ CACHE_TTL = 300  # seconds
 
 def decay_weight(timestamp_utc):
     try:
-        age_seconds = int(time.time()) - int(timestamp_utc)
+        now = int(time.time())
+        age_seconds = now - int(timestamp_utc)
         age_days = age_seconds / 86400
 
         if age_days <= 1:
@@ -55,10 +85,10 @@ def decay_weight(timestamp_utc):
 # =================================================
 
 HUMOR_STYLES = [
-    "Dry, observant social commentary. Subtle humor.",
-    "Internet-native sarcasm. Playful.",
-    "Mock-official analytical tone.",
-    "Light instigation that invites replies."
+    "Dry, observant social commentary. Subtle humor. No insults.",
+    "Internet-native sarcasm. Playful, never cruel.",
+    "Mock-official analytical tone. Dry and bureaucratic.",
+    "Light instigation that invites replies without embarrassment."
 ]
 
 # =================================================
@@ -67,7 +97,7 @@ HUMOR_STYLES = [
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    data = request.get_json(silent=True) or {}
+    data = request.json or {}
     stats = data.get("stats", {})
     context = data.get("context", "")
 
@@ -96,34 +126,7 @@ Description: <one sentence>
         max_tokens=80
     )
 
-    return jsonify({
-        "result": res.choices[0].message.content.strip()
-    })
-
-# =================================================
-# SILENT SPOTLIGHT
-# =================================================
-
-@app.route("/silent", methods=["POST"])
-def silent():
-    persona = random.choice([
-        "Dry observer",
-        "Light sarcasm",
-        "Mock-serious",
-        "Playfully observant"
-    ])
-
-    prompt = f"One sentence. Observational humor. Tone: {persona}"
-
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "system", "content": prompt}],
-        max_tokens=40
-    )
-
-    return jsonify({
-        "line": res.choices[0].message.content.strip()
-    })
+    return jsonify({"result": res.choices[0].message.content.strip()})
 
 # =================================================
 # DATA COLLECTOR
@@ -132,79 +135,20 @@ def silent():
 @app.route("/collect", methods=["POST"])
 def collect():
     data = request.get_json(silent=True)
-
     if not data:
-        return jsonify({"error": "No JSON body"}), 400
-
+        return jsonify({"error": "No JSON"}), 400
     if not GOOGLE_SHEET_ENDPOINT:
-        return jsonify({"error": "GOOGLE_SHEET_ENDPOINT missing"}), 500
+        return jsonify({"error": "Sheet endpoint missing"}), 500
 
     try:
         r = requests.post(GOOGLE_SHEET_ENDPOINT, json=data, timeout=10)
-        if r.status_code != 200:
-            return jsonify({"error": "Sheet write failed"}), 500
-        return jsonify({"status": "ok"})
+        return jsonify({"status": "ok"}) if r.status_code == 200 else jsonify({"error": "Sheet write failed"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 # =================================================
-# GVIZ PARSER
+# PROFILE ENGINE (FIXED)
 # =================================================
-
-def fetch_gviz_rows(url):
-    resp = requests.get(url, timeout=20)
-
-    if not resp.text.startswith("google.visualization.Query.setResponse"):
-        raise ValueError("Invalid gviz response")
-
-    json_str = resp.text[
-        resp.text.find("(") + 1 : resp.text.rfind(")")
-    ]
-
-    data = json.loads(json_str)
-
-    cols = [c["label"] for c in data["table"]["cols"]]
-    rows = []
-
-    for r in data["table"]["rows"]:
-        row = {}
-        for i, cell in enumerate(r["c"]):
-            row[cols[i]] = cell["v"] if cell else None
-        rows.append(row)
-
-    return rows
-
-# =================================================
-# PROFILE ENGINE
-# =================================================
-
-TRAIT_DESCRIPTIONS = {
-    "curious": "Frequently asks questions",
-    "declarative": "Makes statements rather than asking",
-    "initiator": "Initiates interaction",
-    "responsive": "Primarily responds to others",
-    "brief": "Uses short messages",
-    "verbose": "Uses longer messages",
-    "expressive": "Uses emphasis",
-    "measured": "Controlled tone",
-    "supportive": "Offers reassurance",
-    "people_pleasing": "Validates others",
-    "challenging": "Pushes back",
-    "non_confrontational": "Avoids conflict",
-    "connector": "Bridges interactions",
-    "independent": "Speaks autonomously",
-    "agreeable": "Shows agreement",
-    "humorous": "Uses humor",
-    "serious": "Keeps a focused tone",
-    "playful": "Humor + initiation",
-    "reserved": "Speaks selectively",
-    "energetic": "High engagement",
-    "low_key": "Calm presence",
-    "engaged": "Consistent participation",
-    "selective": "Rare but intentional",
-    "observer": "Mostly silent",
-    "dominant_presence": "Commands attention"
-}
 
 @app.route("/build_profiles", methods=["POST"])
 def build_profiles():
@@ -218,7 +162,7 @@ def build_profiles():
         return jsonify(PROFILE_CACHE["data"])
 
     if not GOOGLE_PROFILES_FEED:
-        return jsonify({"error": "GOOGLE_PROFILES_FEED missing"}), 500
+        return jsonify({"error": "Profiles feed missing"}), 500
 
     try:
         rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
@@ -227,87 +171,60 @@ def build_profiles():
 
     profiles = {}
 
-    # ---- aggregate ----
     for r in rows:
         try:
             uuid = r["avatar_uuid"]
-            ts = int(r["timestamp_utc"])
+            timestamp = int(float(r["timestamp_utc"]))
         except Exception:
             continue
 
-        w = decay_weight(ts)
-        msgs = max(float(r.get("messages", 0)), 1.0) * w
+        weight = decay_weight(timestamp)
+        msgs = max(float(r.get("messages", 0)), 1.0) * weight
 
         p = profiles.setdefault(uuid, {
             "display_name": r.get("display_name", "Unknown"),
             "t": {
-                "messages": 0,
-                "attention": 0,
-                "pleasing": 0,
-                "combative": 0,
-                "curious": 0,
-                "dominant": 0,
-                "humor": 0,
-                "supportive": 0,
-                "caps": 0,
-                "short": 0
+                "messages": 0, "attention": 0, "pleasing": 0, "combative": 0,
+                "curious": 0, "dominant": 0, "humor": 0, "supportive": 0,
+                "caps": 0, "short": 0
             }
         })
 
         t = p["t"]
         t["messages"] += msgs
-        t["attention"] += (r.get("kw_attention", 0) or 0) * w
-        t["pleasing"] += (r.get("kw_pleasing", 0) or 0) * w
-        t["combative"] += (r.get("kw_combative", 0) or 0) * w
-        t["curious"] += ((r.get("kw_curious", 0) or 0) + (r.get("questions", 0) or 0)) * w
-        t["dominant"] += (r.get("kw_dominant", 0) or 0) * w
-        t["humor"] += (r.get("kw_humor", 0) or 0) * w
-        t["supportive"] += (r.get("kw_supportive", 0) or 0) * w
-        t["caps"] += (r.get("caps", 0) or 0) * w
-        t["short"] += (r.get("short_msgs", 0) or 0) * w
+        t["attention"] += float(r.get("kw_attention", 0)) * weight
+        t["pleasing"] += float(r.get("kw_pleasing", 0)) * weight
+        t["combative"] += float(r.get("kw_combative", 0)) * weight
+        t["curious"] += (float(r.get("kw_curious", 0)) + float(r.get("questions", 0))) * weight
+        t["dominant"] += float(r.get("kw_dominant", 0)) * weight
+        t["humor"] += float(r.get("kw_humor", 0)) * weight
+        t["supportive"] += float(r.get("kw_supportive", 0)) * weight
+        t["caps"] += float(r.get("caps", 0)) * weight
+        t["short"] += float(r.get("short_msgs", 0)) * weight
 
-    # ---- derive ----
     results = {}
-
     for uuid, p in profiles.items():
-        t = p["t"]
-        m = max(t["messages"], 1.0)
-
+        m = max(p["t"]["messages"], 1.0)
         if m < 5:
             continue
 
         traits = {
-            "curious": t["curious"] / m,
-            "initiator": t["attention"] / m,
-            "brief": t["short"] / m,
-            "expressive": t["caps"] / m,
-            "supportive": t["supportive"] / m,
-            "people_pleasing": t["pleasing"] / m,
-            "challenging": t["combative"] / m,
-            "humorous": t["humor"] / m,
-            "energetic": (t["caps"] + t["attention"]) / (2 * m),
-            "dominant_presence": (t["dominant"] + t["caps"] + m) / (3 * m),
+            "curious": p["t"]["curious"] / m,
+            "dominant_presence": (p["t"]["dominant"] + p["t"]["caps"] + m) / (3 * m),
+            "supportive": p["t"]["supportive"] / m,
+            "humorous": p["t"]["humor"] / m,
+            "energetic": (p["t"]["caps"] + p["t"]["attention"]) / (2 * m),
         }
 
-        top = sorted(traits.items(), key=lambda x: x[1], reverse=True)[:5]
+        top = sorted(traits.items(), key=lambda x: x[1], reverse=True)
 
         results[uuid] = {
             "display_name": p["display_name"],
-            "updated_at": int(time.time()),
             "confidence": round(min(1.0, math.log(m + 1) / 5), 2),
-            "top_traits": [
-                {
-                    "trait": name,
-                    "score": round(score, 2),
-                    "description": TRAIT_DESCRIPTIONS[name]
-                }
-                for name, score in top
-            ]
+            "top_traits": [{"trait": k, "score": round(v, 2)} for k, v in top[:5]]
         }
 
-    PROFILE_CACHE["data"] = results
-    PROFILE_CACHE["ts"] = now
-
+    PROFILE_CACHE.update({"data": results, "ts": now})
     return jsonify(results)
 
 # =================================================
@@ -315,5 +232,5 @@ def build_profiles():
 # =================================================
 
 @app.route("/")
-def health():
+def ok():
     return "OK"
