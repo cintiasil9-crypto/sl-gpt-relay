@@ -196,6 +196,77 @@ def collect():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/build_profiles", methods=["POST"])
+def build_profiles():
+    if not GOOGLE_PROFILES_FEED:
+        return jsonify({"error": "Profiles feed not configured"}), 500
+
+    rows = requests.get(GOOGLE_PROFILES_FEED, timeout=15).json()
+
+    profiles = {}
+
+    for r in rows:
+        uuid = r["avatar_uuid"]
+        msgs = max(int(r["messages"]), 1)
+
+        if uuid not in profiles:
+            profiles[uuid] = {
+                "display_name": r["display_name"],
+                "totals": {
+                    "messages": 0,
+                    "attention": 0,
+                    "pleasing": 0,
+                    "combative": 0,
+                    "curious": 0,
+                    "dominant": 0,
+                    "humor": 0,
+                    "supportive": 0,
+                    "caps": 0,
+                    "short": 0
+                }
+            }
+
+        p = profiles[uuid]["totals"]
+
+        p["messages"] += msgs
+        p["attention"] += int(r["kw_attention"])
+        p["pleasing"] += int(r["kw_pleasing"])
+        p["combative"] += int(r["kw_combative"])
+        p["curious"] += int(r["kw_curious"]) + int(r["questions"])
+        p["dominant"] += int(r["kw_dominant"])
+        p["humor"] += int(r["kw_humor"])
+        p["supportive"] += int(r["kw_supportive"])
+        p["caps"] += int(r["caps"])
+        p["short"] += int(r["short_msgs"])
+
+    results = {}
+
+    for uuid, p in profiles.items():
+        m = max(p["totals"]["messages"], 1)
+
+        scores = {
+            "attention_seeking": p["totals"]["attention"] / m,
+            "people_pleasing": p["totals"]["pleasing"] / m,
+            "combative": p["totals"]["combative"] / m,
+            "curious": p["totals"]["curious"] / m,
+            "dominant": p["totals"]["dominant"] / m,
+            "humorous": p["totals"]["humor"] / m,
+            "supportive": p["totals"]["supportive"] / m,
+            "expressive": p["totals"]["caps"] / m,
+            "brief": p["totals"]["short"] / m
+        }
+
+        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        results[uuid] = {
+            "display_name": profiles[uuid]["display_name"],
+            "top_traits": top,
+            "confidence": min(1.0, math.log(m + 1) / 5)
+        }
+
+    return jsonify(results)
+
+
 # -------------------------------------------------
 # HEALTH CHECK
 # -------------------------------------------------
@@ -203,5 +274,6 @@ def collect():
 @app.route("/")
 def ok():
     return "OK"
+
 
 
