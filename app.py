@@ -1,6 +1,12 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-import os, time, math, random, requests, json, re
+import os
+import time
+import math
+import random
+import requests
+import json
+import re
 
 # =================================================
 # APP SETUP
@@ -16,23 +22,24 @@ PROFILE_BUILD_KEY = os.environ.get("PROFILE_BUILD_KEY")
 # CACHE
 # =================================================
 
-PROFILE_CACHE = {
-    "data": {},
-    "ts": 0
-}
+PROFILE_CACHE = {"data": {}, "ts": 0}
 CACHE_TTL = 300  # seconds
 
 # =================================================
-# GVIZ PARSER (BULLETPROOF)
+# GVIZ PARSER (THIS IS THE IMPORTANT PART)
 # =================================================
 
 def fetch_gviz_rows(url):
     r = requests.get(url, timeout=20)
+    r.raise_for_status()
+
     text = r.text.strip()
 
+    # Must be Google Visualization JS, not JSON
     if not text.startswith("google.visualization"):
         raise ValueError("Invalid gviz response")
 
+    # Strip JS wrapper
     match = re.search(r"setResponse\((.*)\);?$", text, re.S)
     if not match:
         raise ValueError("GVIZ payload not found")
@@ -40,14 +47,15 @@ def fetch_gviz_rows(url):
     payload = json.loads(match.group(1))
     table = payload.get("table", {})
 
-    cols = [c.get("label") for c in table.get("cols", [])]
-    rows = []
+    # Use column IDs (labels are often empty)
+    cols = [(c.get("id") or c.get("label")) for c in table.get("cols", [])]
 
-    for row in table.get("rows", []):
-        out = {}
-        for i, cell in enumerate(row.get("c", [])):
-            out[cols[i]] = cell.get("v") if cell else None
-        rows.append(out)
+    rows = []
+    for r in table.get("rows", []):
+        row = {}
+        for i, cell in enumerate(r.get("c", [])):
+            row[cols[i]] = cell.get("v") if cell else None
+        rows.append(row)
 
     return rows
 
@@ -57,18 +65,17 @@ def fetch_gviz_rows(url):
 
 def decay_weight(ts):
     try:
-        age = time.time() - int(ts)
-        days = age / 86400
-        if days <= 1:
+        age_days = (time.time() - int(ts)) / 86400
+        if age_days <= 1:
             return 1.0
-        if days <= 7:
+        elif age_days <= 7:
             return 0.6
         return 0.3
     except:
         return 0.0
 
 # =================================================
-# PROFILE ENGINE
+# PROFILE ENGINE (NO CRASH VERSION)
 # =================================================
 
 @app.route("/build_profiles", methods=["POST"])
@@ -90,10 +97,12 @@ def build_profiles():
     try:
         rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
     except Exception as e:
+        # IMPORTANT: return JSON, not crash
         return jsonify({"error": str(e)}), 500
 
     profiles = {}
 
+    # ---------- Aggregate ----------
     for r in rows:
         try:
             uuid = r["avatar_uuid"]
@@ -101,29 +110,30 @@ def build_profiles():
         except:
             continue
 
-        w = decay_weight(ts)
-        msgs = max(float(r.get("messages", 0)), 1.0) * w
+        weight = decay_weight(ts)
+        msgs = max(float(r.get("messages", 0)), 1.0) * weight
 
         p = profiles.setdefault(uuid, {
             "display_name": r.get("display_name", "Unknown"),
             "t": {
-                "messages": 0,
-                "curious": 0,
-                "dominant": 0,
-                "supportive": 0,
-                "humor": 0,
-                "caps": 0
+                "messages": 0.0,
+                "curious": 0.0,
+                "dominant": 0.0,
+                "supportive": 0.0,
+                "humor": 0.0,
+                "caps": 0.0
             }
         })
 
         t = p["t"]
         t["messages"] += msgs
-        t["curious"] += float(r.get("kw_curious", 0)) * w
-        t["dominant"] += float(r.get("kw_dominant", 0)) * w
-        t["supportive"] += float(r.get("kw_supportive", 0)) * w
-        t["humor"] += float(r.get("kw_humor", 0)) * w
-        t["caps"] += float(r.get("caps", 0)) * w
+        t["curious"] += float(r.get("kw_curious", 0)) * weight
+        t["dominant"] += float(r.get("kw_dominant", 0)) * weight
+        t["supportive"] += float(r.get("kw_supportive", 0)) * weight
+        t["humor"] += float(r.get("kw_humor", 0)) * weight
+        t["caps"] += float(r.get("caps", 0)) * weight
 
+    # ---------- Build Results ----------
     results = {}
 
     for uuid, p in profiles.items():
