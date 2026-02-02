@@ -1,29 +1,35 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import os
-import random
-import math
 import time
+import math
+import random
 import requests
 import json
-import re
 
 # =================================================
 # APP SETUP
 # =================================================
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+client = OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY")
+)
 
 GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
 GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
 PROFILE_BUILD_KEY = os.environ.get("PROFILE_BUILD_KEY")
 
 # =================================================
-# SIMPLE IN-MEMORY CACHE
+# CACHE
 # =================================================
 
-PROFILE_CACHE = {"data": None, "ts": 0}
+PROFILE_CACHE = {
+    "data": None,
+    "ts": 0
+}
+
 CACHE_TTL = 300  # seconds
 
 # =================================================
@@ -32,8 +38,7 @@ CACHE_TTL = 300  # seconds
 
 def decay_weight(timestamp_utc):
     try:
-        now = int(time.time())
-        age_seconds = now - int(timestamp_utc)
+        age_seconds = int(time.time()) - int(timestamp_utc)
         age_days = age_seconds / 86400
 
         if age_days <= 1:
@@ -50,10 +55,10 @@ def decay_weight(timestamp_utc):
 # =================================================
 
 HUMOR_STYLES = [
-    "Dry, observant social commentary. Subtle humor. No insults.",
-    "Internet-native sarcasm. Playful, never cruel.",
-    "Mock-official analytical tone. Dry and bureaucratic.",
-    "Light instigation that invites replies without embarrassment."
+    "Dry, observant social commentary. Subtle humor.",
+    "Internet-native sarcasm. Playful.",
+    "Mock-official analytical tone.",
+    "Light instigation that invites replies."
 ]
 
 # =================================================
@@ -62,7 +67,7 @@ HUMOR_STYLES = [
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     stats = data.get("stats", {})
     context = data.get("context", "")
 
@@ -91,7 +96,9 @@ Description: <one sentence>
         max_tokens=80
     )
 
-    return jsonify({"result": res.choices[0].message.content.strip()})
+    return jsonify({
+        "result": res.choices[0].message.content.strip()
+    })
 
 # =================================================
 # SILENT SPOTLIGHT
@@ -100,10 +107,10 @@ Description: <one sentence>
 @app.route("/silent", methods=["POST"])
 def silent():
     persona = random.choice([
-        "Dry observer.",
-        "Light sarcasm.",
-        "Mock-serious.",
-        "Playfully observant."
+        "Dry observer",
+        "Light sarcasm",
+        "Mock-serious",
+        "Playfully observant"
     ])
 
     prompt = f"One sentence. Observational humor. Tone: {persona}"
@@ -114,7 +121,9 @@ def silent():
         max_tokens=40
     )
 
-    return jsonify({"line": res.choices[0].message.content.strip()})
+    return jsonify({
+        "line": res.choices[0].message.content.strip()
+    })
 
 # =================================================
 # DATA COLLECTOR
@@ -125,9 +134,10 @@ def collect():
     data = request.get_json(silent=True)
 
     if not data:
-        return jsonify({"error": "No JSON"}), 400
+        return jsonify({"error": "No JSON body"}), 400
+
     if not GOOGLE_SHEET_ENDPOINT:
-        return jsonify({"error": "Sheet endpoint missing"}), 500
+        return jsonify({"error": "GOOGLE_SHEET_ENDPOINT missing"}), 500
 
     try:
         r = requests.post(GOOGLE_SHEET_ENDPOINT, json=data, timeout=10)
@@ -138,43 +148,63 @@ def collect():
         return jsonify({"error": str(e)}), 500
 
 # =================================================
-# TRAIT DEFINITIONS
+# GVIZ PARSER
+# =================================================
+
+def fetch_gviz_rows(url):
+    resp = requests.get(url, timeout=20)
+
+    if not resp.text.startswith("google.visualization.Query.setResponse"):
+        raise ValueError("Invalid gviz response")
+
+    json_str = resp.text[
+        resp.text.find("(") + 1 : resp.text.rfind(")")
+    ]
+
+    data = json.loads(json_str)
+
+    cols = [c["label"] for c in data["table"]["cols"]]
+    rows = []
+
+    for r in data["table"]["rows"]:
+        row = {}
+        for i, cell in enumerate(r["c"]):
+            row[cols[i]] = cell["v"] if cell else None
+        rows.append(row)
+
+    return rows
+
+# =================================================
+# PROFILE ENGINE
 # =================================================
 
 TRAIT_DESCRIPTIONS = {
-    "curious": "Frequently asks questions and explores topics",
+    "curious": "Frequently asks questions",
     "declarative": "Makes statements rather than asking",
     "initiator": "Initiates interaction",
     "responsive": "Primarily responds to others",
     "brief": "Uses short messages",
     "verbose": "Uses longer messages",
-    "expressive": "Uses emphasis or intensity",
-    "measured": "Maintains controlled tone",
-
-    "supportive": "Offers help or reassurance",
-    "people_pleasing": "Smooths or validates interactions",
-    "challenging": "Pushes back on statements",
+    "expressive": "Uses emphasis",
+    "measured": "Controlled tone",
+    "supportive": "Offers reassurance",
+    "people_pleasing": "Validates others",
+    "challenging": "Pushes back",
     "non_confrontational": "Avoids conflict",
-    "connector": "Bridges social interaction",
-    "independent": "Speaks without social reliance",
-    "agreeable": "Shows agreement over opposition",
-
-    "humorous": "Uses humor socially",
+    "connector": "Bridges interactions",
+    "independent": "Speaks autonomously",
+    "agreeable": "Shows agreement",
+    "humorous": "Uses humor",
     "serious": "Keeps a focused tone",
-    "playful": "Humor combined with initiation",
+    "playful": "Humor + initiation",
     "reserved": "Speaks selectively",
-    "energetic": "High engagement and emphasis",
+    "energetic": "High engagement",
     "low_key": "Calm presence",
-
-    "engaged": "Participates consistently",
-    "selective": "Rare but intentional speech",
-    "observer": "Mostly silent presence",
+    "engaged": "Consistent participation",
+    "selective": "Rare but intentional",
+    "observer": "Mostly silent",
     "dominant_presence": "Commands attention"
 }
-
-# =================================================
-# PROFILE ENGINE (FIXED GVIZ PARSING)
-# =================================================
 
 @app.route("/build_profiles", methods=["POST"])
 def build_profiles():
@@ -188,66 +218,61 @@ def build_profiles():
         return jsonify(PROFILE_CACHE["data"])
 
     if not GOOGLE_PROFILES_FEED:
-        return jsonify({"error": "Profiles feed missing"}), 500
+        return jsonify({"error": "GOOGLE_PROFILES_FEED missing"}), 500
 
-    # ---- fetch gviz ----
     try:
-        resp = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
-        text = resp.text
-
-        match = re.search(r"setResponse\((.*)\);?$", text, re.S)
-        if not match:
-            return jsonify({"error": "Invalid gviz response"}), 500
-
-        data = json.loads(match.group(1))
-        rows = data["table"]["rows"]
-        cols = [c["label"] for c in data["table"]["cols"]]
-
+        rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
     except Exception as e:
-        return jsonify({"error": f"Feed parse failed: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
     profiles = {}
 
-    # ---------- Aggregate ----------
-    for row in rows:
+    # ---- aggregate ----
+    for r in rows:
         try:
-            r = {cols[i]: row["c"][i]["v"] if row["c"][i] else None for i in range(len(cols))}
             uuid = r["avatar_uuid"]
-            timestamp = int(r["timestamp_utc"])
+            ts = int(r["timestamp_utc"])
         except Exception:
             continue
 
-        weight = decay_weight(timestamp)
-        msgs = max(float(r.get("messages", 0)), 1.0) * weight
+        w = decay_weight(ts)
+        msgs = max(float(r.get("messages", 0)), 1.0) * w
 
-        if uuid not in profiles:
-            profiles[uuid] = {
-                "display_name": r.get("display_name", "Unknown"),
-                "t": {k: 0.0 for k in [
-                    "messages","attention","pleasing","combative","curious",
-                    "dominant","humor","supportive","caps","short"
-                ]}
+        p = profiles.setdefault(uuid, {
+            "display_name": r.get("display_name", "Unknown"),
+            "t": {
+                "messages": 0,
+                "attention": 0,
+                "pleasing": 0,
+                "combative": 0,
+                "curious": 0,
+                "dominant": 0,
+                "humor": 0,
+                "supportive": 0,
+                "caps": 0,
+                "short": 0
             }
+        })
 
-        t = profiles[uuid]["t"]
-
+        t = p["t"]
         t["messages"] += msgs
-        t["attention"] += (r.get("kw_attention") or 0) * weight
-        t["pleasing"] += (r.get("kw_pleasing") or 0) * weight
-        t["combative"] += (r.get("kw_combative") or 0) * weight
-        t["curious"] += ((r.get("kw_curious") or 0) + (r.get("questions") or 0)) * weight
-        t["dominant"] += (r.get("kw_dominant") or 0) * weight
-        t["humor"] += (r.get("kw_humor") or 0) * weight
-        t["supportive"] += (r.get("kw_supportive") or 0) * weight
-        t["caps"] += (r.get("caps") or 0) * weight
-        t["short"] += (r.get("short_msgs") or 0) * weight
+        t["attention"] += (r.get("kw_attention", 0) or 0) * w
+        t["pleasing"] += (r.get("kw_pleasing", 0) or 0) * w
+        t["combative"] += (r.get("kw_combative", 0) or 0) * w
+        t["curious"] += ((r.get("kw_curious", 0) or 0) + (r.get("questions", 0) or 0)) * w
+        t["dominant"] += (r.get("kw_dominant", 0) or 0) * w
+        t["humor"] += (r.get("kw_humor", 0) or 0) * w
+        t["supportive"] += (r.get("kw_supportive", 0) or 0) * w
+        t["caps"] += (r.get("caps", 0) or 0) * w
+        t["short"] += (r.get("short_msgs", 0) or 0) * w
 
-    # ---------- Derive Traits ----------
+    # ---- derive ----
     results = {}
 
     for uuid, p in profiles.items():
         t = p["t"]
         m = max(t["messages"], 1.0)
+
         if m < 5:
             continue
 
@@ -257,13 +282,12 @@ def build_profiles():
             "brief": t["short"] / m,
             "expressive": t["caps"] / m,
             "supportive": t["supportive"] / m,
+            "people_pleasing": t["pleasing"] / m,
             "challenging": t["combative"] / m,
             "humorous": t["humor"] / m,
-            "dominant_presence": (t["dominant"] + t["caps"]) / (2 * m),
+            "energetic": (t["caps"] + t["attention"]) / (2 * m),
+            "dominant_presence": (t["dominant"] + t["caps"] + m) / (3 * m),
         }
-
-        for k in traits:
-            traits[k] = max(0.0, min(1.0, traits[k]))
 
         top = sorted(traits.items(), key=lambda x: x[1], reverse=True)[:5]
 
@@ -275,7 +299,7 @@ def build_profiles():
                 {
                     "trait": name,
                     "score": round(score, 2),
-                    "description": TRAIT_DESCRIPTIONS.get(name, "")
+                    "description": TRAIT_DESCRIPTIONS[name]
                 }
                 for name, score in top
             ]
@@ -291,5 +315,5 @@ def build_profiles():
 # =================================================
 
 @app.route("/")
-def ok():
+def health():
     return "OK"
