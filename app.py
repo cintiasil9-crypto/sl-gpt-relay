@@ -15,48 +15,43 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
 GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
+PROFILE_BUILD_KEY = os.environ.get("PROFILE_BUILD_KEY")
+
+# =================================================
+# SIMPLE IN-MEMORY CACHE
+# =================================================
+
+PROFILE_CACHE = {"data": None, "ts": 0}
+CACHE_TTL = 300  # seconds
 
 # =================================================
 # TIME DECAY
 # =================================================
 
 def decay_weight(timestamp_utc):
-    now = int(time.time())
-    age_seconds = now - int(timestamp_utc)
-    age_days = age_seconds / 86400
+    try:
+        now = int(time.time())
+        age_seconds = now - int(timestamp_utc)
+        age_days = age_seconds / 86400
 
-    if age_days <= 1:
-        return 1.0
-    elif age_days <= 7:
-        return 0.6
-    else:
-        return 0.3
+        if age_days <= 1:
+            return 1.0
+        elif age_days <= 7:
+            return 0.6
+        else:
+            return 0.3
+    except Exception:
+        return 0.0
 
 # =================================================
 # HUMOR PERSONAS (GPT)
 # =================================================
 
 HUMOR_STYLES = [
-    """
-You are a dry, observant social commentator.
-Subtle, unimpressed humor.
-No insults. No protected traits. No mental health terms.
-""",
-    """
-Internet-native sarcasm.
-Playful, not cruel.
-No protected traits. No mental health terms.
-""",
-    """
-Mock-official analytical tone.
-Dry and bureaucratic.
-No insults or protected traits.
-""",
-    """
-Light instigation that invites replies.
-Never embarrassing.
-No protected traits.
-"""
+    "Dry, observant social commentary. Subtle humor. No insults.",
+    "Internet-native sarcasm. Playful, never cruel.",
+    "Mock-official analytical tone. Dry and bureaucratic.",
+    "Light instigation that invites replies without embarrassment."
 ]
 
 # =================================================
@@ -109,11 +104,7 @@ def silent():
         "Playfully observant."
     ])
 
-    prompt = f"""
-One sentence.
-Funny, observational.
-Tone: {persona}
-"""
+    prompt = f"One sentence. Observational humor. Tone: {persona}"
 
     res = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -145,7 +136,7 @@ def collect():
         return jsonify({"error": str(e)}), 500
 
 # =================================================
-# PROFILE ENGINE (25 TRAITS + DECAY)
+# PROFILE ENGINE (25 TRAITS + DECAY + HARDENING)
 # =================================================
 
 TRAIT_DESCRIPTIONS = {
@@ -168,7 +159,7 @@ TRAIT_DESCRIPTIONS = {
 
     "humorous": "Uses humor socially",
     "serious": "Keeps a focused tone",
-    "playful": "Humor + initiation",
+    "playful": "Humor combined with initiation",
     "reserved": "Speaks selectively",
     "energetic": "High engagement and emphasis",
     "low_key": "Calm presence",
@@ -181,6 +172,16 @@ TRAIT_DESCRIPTIONS = {
 
 @app.route("/build_profiles", methods=["POST"])
 def build_profiles():
+    # ---- auth ----
+    key = request.headers.get("X-Profile-Key")
+    if key != PROFILE_BUILD_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # ---- cache ----
+    now = time.time()
+    if PROFILE_CACHE["data"] and now - PROFILE_CACHE["ts"] < CACHE_TTL:
+        return jsonify(PROFILE_CACHE["data"])
+
     if not GOOGLE_PROFILES_FEED:
         return jsonify({"error": "Profiles feed missing"}), 500
 
@@ -189,46 +190,54 @@ def build_profiles():
 
     # ---------- Aggregate ----------
     for r in rows:
-        uuid = r["avatar_uuid"]
-        weight = decay_weight(r["timestamp_utc"])
-        msgs = max(int(r["messages"]), 1) * weight
+        try:
+            uuid = r["avatar_uuid"]
+            timestamp = int(r["timestamp_utc"])
+        except Exception:
+            continue
+
+        weight = decay_weight(timestamp)
+        msgs = max(float(r.get("messages", 0)), 1.0) * weight
 
         if uuid not in profiles:
             profiles[uuid] = {
-                "display_name": r["display_name"],
+                "display_name": r.get("display_name", "Unknown"),
                 "t": {
-                    "messages": 0,
-                    "attention": 0,
-                    "pleasing": 0,
-                    "combative": 0,
-                    "curious": 0,
-                    "dominant": 0,
-                    "humor": 0,
-                    "supportive": 0,
-                    "caps": 0,
-                    "short": 0
+                    "messages": 0.0,
+                    "attention": 0.0,
+                    "pleasing": 0.0,
+                    "combative": 0.0,
+                    "curious": 0.0,
+                    "dominant": 0.0,
+                    "humor": 0.0,
+                    "supportive": 0.0,
+                    "caps": 0.0,
+                    "short": 0.0
                 }
             }
 
         t = profiles[uuid]["t"]
 
         t["messages"] += msgs
-        t["attention"] += int(r["kw_attention"]) * weight
-        t["pleasing"] += int(r["kw_pleasing"]) * weight
-        t["combative"] += int(r["kw_combative"]) * weight
-        t["curious"] += (int(r["kw_curious"]) + int(r["questions"])) * weight
-        t["dominant"] += int(r["kw_dominant"]) * weight
-        t["humor"] += int(r["kw_humor"]) * weight
-        t["supportive"] += int(r["kw_supportive"]) * weight
-        t["caps"] += int(r["caps"]) * weight
-        t["short"] += int(r["short_msgs"]) * weight
+        t["attention"] += int(r.get("kw_attention", 0)) * weight
+        t["pleasing"] += int(r.get("kw_pleasing", 0)) * weight
+        t["combative"] += int(r.get("kw_combative", 0)) * weight
+        t["curious"] += (int(r.get("kw_curious", 0)) + int(r.get("questions", 0))) * weight
+        t["dominant"] += int(r.get("kw_dominant", 0)) * weight
+        t["humor"] += int(r.get("kw_humor", 0)) * weight
+        t["supportive"] += int(r.get("kw_supportive", 0)) * weight
+        t["caps"] += int(r.get("caps", 0)) * weight
+        t["short"] += int(r.get("short_msgs", 0)) * weight
 
     # ---------- Derive Traits ----------
     results = {}
 
     for uuid, p in profiles.items():
         t = p["t"]
-        m = max(t["messages"], 1)
+        m = max(t["messages"], 1.0)
+
+        if m < 5:
+            continue  # minimum signal threshold
 
         traits = {
             "curious": t["curious"] / m,
@@ -268,6 +277,7 @@ def build_profiles():
 
         results[uuid] = {
             "display_name": p["display_name"],
+            "updated_at": int(time.time()),
             "confidence": round(min(1.0, math.log(m + 1) / 5), 2),
             "top_traits": [
                 {
@@ -278,6 +288,9 @@ def build_profiles():
                 for name, score in top
             ]
         }
+
+    PROFILE_CACHE["data"] = results
+    PROFILE_CACHE["ts"] = now
 
     return jsonify(results)
 
