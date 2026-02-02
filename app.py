@@ -27,22 +27,19 @@ PROFILE_CACHE = {"data": None, "ts": 0}
 CACHE_TTL = 300  # seconds
 
 # =================================================
-# UTIL: PARSE GVIZ RESPONSE (THIS IS THE FIX)
+# GVIZ PARSER (CORRECT)
 # =================================================
 
 def fetch_gviz_rows(url):
-    """
-    Google GVIZ returns JS, not JSON.
-    This function extracts and parses the real payload safely.
-    """
     r = requests.get(url, timeout=20)
+    r.raise_for_status()
+
     text = r.text.strip()
 
-    # Guardrail: Google error pages
+    # Google error pages / quota pages
     if not text.startswith("google.visualization"):
         raise ValueError("Invalid gviz response")
 
-    # Extract JSON inside setResponse(...)
     match = re.search(r"setResponse\((.*)\);?$", text, re.S)
     if not match:
         raise ValueError("GVIZ payload not found")
@@ -50,9 +47,10 @@ def fetch_gviz_rows(url):
     payload = json.loads(match.group(1))
     table = payload["table"]
 
-    cols = [c["label"] for c in table["cols"]]
-    rows = []
+    # IMPORTANT: use id first, label is often blank
+    cols = [(c.get("id") or c.get("label")) for c in table["cols"]]
 
+    rows = []
     for r in table["rows"]:
         row = {}
         for i, cell in enumerate(r["c"]):
@@ -68,8 +66,7 @@ def fetch_gviz_rows(url):
 def decay_weight(timestamp_utc):
     try:
         now = int(time.time())
-        age_seconds = now - int(timestamp_utc)
-        age_days = age_seconds / 86400
+        age_days = (now - int(timestamp_utc)) / 86400
 
         if age_days <= 1:
             return 1.0
@@ -142,12 +139,14 @@ def collect():
 
     try:
         r = requests.post(GOOGLE_SHEET_ENDPOINT, json=data, timeout=10)
-        return jsonify({"status": "ok"}) if r.status_code == 200 else jsonify({"error": "Sheet write failed"}), 500
+        if r.status_code == 200:
+            return jsonify({"status": "ok"})
+        return jsonify({"error": "Sheet write failed"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 # =================================================
-# PROFILE ENGINE (FIXED)
+# PROFILE ENGINE (FINAL)
 # =================================================
 
 @app.route("/build_profiles", methods=["POST"])
@@ -184,9 +183,16 @@ def build_profiles():
         p = profiles.setdefault(uuid, {
             "display_name": r.get("display_name", "Unknown"),
             "t": {
-                "messages": 0, "attention": 0, "pleasing": 0, "combative": 0,
-                "curious": 0, "dominant": 0, "humor": 0, "supportive": 0,
-                "caps": 0, "short": 0
+                "messages": 0.0,
+                "attention": 0.0,
+                "pleasing": 0.0,
+                "combative": 0.0,
+                "curious": 0.0,
+                "dominant": 0.0,
+                "humor": 0.0,
+                "supportive": 0.0,
+                "caps": 0.0,
+                "short": 0.0
             }
         })
 
@@ -203,6 +209,7 @@ def build_profiles():
         t["short"] += float(r.get("short_msgs", 0)) * weight
 
     results = {}
+
     for uuid, p in profiles.items():
         m = max(p["t"]["messages"], 1.0)
         if m < 5:
@@ -213,7 +220,7 @@ def build_profiles():
             "dominant_presence": (p["t"]["dominant"] + p["t"]["caps"] + m) / (3 * m),
             "supportive": p["t"]["supportive"] / m,
             "humorous": p["t"]["humor"] / m,
-            "energetic": (p["t"]["caps"] + p["t"]["attention"]) / (2 * m),
+            "energetic": (p["t"]["caps"] + p["t"]["attention"]) / (2 * m)
         }
 
         top = sorted(traits.items(), key=lambda x: x[1], reverse=True)
@@ -221,10 +228,15 @@ def build_profiles():
         results[uuid] = {
             "display_name": p["display_name"],
             "confidence": round(min(1.0, math.log(m + 1) / 5), 2),
-            "top_traits": [{"trait": k, "score": round(v, 2)} for k, v in top[:5]]
+            "top_traits": [
+                {"trait": k, "score": round(v, 2)}
+                for k, v in top[:5]
+            ]
         }
 
-    PROFILE_CACHE.update({"data": results, "ts": now})
+    PROFILE_CACHE["data"] = results
+    PROFILE_CACHE["ts"] = now
+
     return jsonify(results)
 
 # =================================================
