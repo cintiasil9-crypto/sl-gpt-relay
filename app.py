@@ -1,29 +1,37 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response
+from openai import OpenAI
 import os, time, math, random, requests, json, re
 
-# =====================================
+# =================================================
 # APP SETUP
-# =====================================
+# =================================================
 
 app = Flask(__name__)
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
-PROFILE_BUILD_KEY   = os.environ["PROFILE_BUILD_KEY"]
+GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
+GOOGLE_PROFILES_FEED  = os.environ["GOOGLE_PROFILES_FEED"]
+PROFILE_BUILD_KEY     = os.environ["PROFILE_BUILD_KEY"]
 
-# =====================================
+# =================================================
 # CACHE
-# =====================================
+# =================================================
 
 PROFILE_CACHE = {"data": None, "ts": 0}
-CACHE_TTL = 300
+CACHE_TTL = 300  # seconds
 
-# =====================================
+# =================================================
 # GVIZ PARSER (STABLE)
-# =====================================
+# =================================================
 
 def fetch_gviz_rows(url):
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-    match = re.search(r"setResponse\((\{.*\})\);", r.text, re.S)
+    r = requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=20
+    )
+
+    match = re.search(r"setResponse\((\{.*\})\);?", r.text, re.S)
     if not match:
         raise ValueError("GVIZ payload not found")
 
@@ -34,42 +42,44 @@ def fetch_gviz_rows(url):
     rows = []
 
     for row in table["rows"]:
-        obj = {}
+        record = {}
         for i, cell in enumerate(row["c"]):
-            obj[cols[i]] = cell["v"] if cell else 0
-        rows.append(obj)
+            record[cols[i]] = cell["v"] if cell else 0
+        rows.append(record)
 
     return rows
 
-# =====================================
-# DECAY
-# =====================================
+# =================================================
+# TIME DECAY
+# =================================================
 
 def decay_weight(ts):
     try:
         age_days = (time.time() - int(ts)) / 86400
-        if age_days <= 1: return 1.0
-        if age_days <= 7: return 0.6
+        if age_days <= 1:
+            return 1.0
+        if age_days <= 7:
+            return 0.6
         return 0.3
     except:
         return 0.0
 
-# =====================================
-# PROFILE BUILDER
-# =====================================
+# =================================================
+# PROFILE BUILDER (SL SAFE OUTPUT)
+# =================================================
 
 @app.route("/build_profiles", methods=["POST"])
 def build_profiles():
     if request.headers.get("X-Profile-Key") != PROFILE_BUILD_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
+        return Response("Unauthorized", status=401)
 
     now = time.time()
     if PROFILE_CACHE["data"] and now - PROFILE_CACHE["ts"] < CACHE_TTL:
-        return jsonify(PROFILE_CACHE["data"])
+        return Response(PROFILE_CACHE["data"], mimetype="text/plain")
 
     rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
 
-    raw = {}
+    profiles = {}
 
     for r in rows:
         try:
@@ -80,82 +90,66 @@ def build_profiles():
 
         w = decay_weight(ts)
 
-        p = raw.setdefault(uuid, {
-            "display_name": r.get("display_name", "Unknown"),
+        p = profiles.setdefault(uuid, {
+            "name": r.get("display_name", "Unknown"),
             "messages": 0,
-            "questions": 0,
-            "caps": 0,
-            "short": 0,
-            "humor": 0,
-            "curious": 0,
-            "dominant": 0,
-            "supportive": 0,
-            "engaging": 0,
-            "combative": 0,
+            "traits": {
+                "concise": 0,
+                "engaging": 0,
+                "combative": 0,
+                "humorous": 0,
+                "curious": 0,
+                "dominant": 0,
+                "supportive": 0,
+            }
         })
 
-        p["messages"]   += max(float(r.get("messages", 0)), 1) * w
-        p["questions"]  += float(r.get("questions", 0)) * w
-        p["caps"]       += float(r.get("caps", 0)) * w
-        p["short"]      += float(r.get("short_msgs", 0)) * w
-        p["humor"]      += float(r.get("kw_humor", 0)) * w
-        p["curious"]    += float(r.get("kw_curious", 0)) * w
-        p["dominant"]   += float(r.get("kw_dominant", 0)) * w
-        p["supportive"] += float(r.get("kw_supportive", 0)) * w
-        p["engaging"]   += float(r.get("kw_attention", 0)) * w
-        p["combative"]  += float(r.get("kw_combative", 0)) * w
+        p["messages"] += max(float(r.get("messages", 0)), 1) * w
 
-    profiles = []
-    chat_lines = ["📊 Social Profiles:"]
+        p["traits"]["concise"]    += (1 - float(r.get("short_msgs", 0))) * w
+        p["traits"]["engaging"]   += (float(r.get("kw_attention", 0)) + float(r.get("kw_connector", 0))) * w
+        p["traits"]["combative"]  += float(r.get("kw_combative", 0)) * w
+        p["traits"]["humorous"]   += float(r.get("kw_humor", 0)) * w
+        p["traits"]["curious"]    += (float(r.get("kw_curious", 0)) + float(r.get("questions", 0))) * w
+        p["traits"]["dominant"]   += float(r.get("kw_dominant", 0)) * w
+        p["traits"]["supportive"] += float(r.get("kw_supportive", 0)) * w
 
-    for uuid, p in raw.items():
-        m = max(p["messages"], 1)
+    # =================================================
+    # BUILD CHAT MESSAGE (PLAIN TEXT)
+    # =================================================
+
+    lines = ["📊 Social Profiles:"]
+
+    for p in profiles.values():
+        m = p["messages"]
         if m < 5:
             continue
 
-        traits = {
-            "concise":    1 - (p["short"] / m),
-            "engaging":   p["engaging"] / m,
-            "combative":  p["combative"] / m,
-            "humorous":   p["humor"] / m,
-            "curious":    (p["curious"] + p["questions"]) / m,
-            "dominant":   (p["dominant"] + p["caps"]) / m,
-            "supportive": p["supportive"] / m,
-        }
+        confidence = round(min(1.0, math.log(m + 1) / 5), 2)
+        lines.append(f"🧠 {p['name']} ({confidence})")
 
         top = sorted(
-            [{"trait": k, "score": round(v, 2)} for k, v in traits.items()],
-            key=lambda x: x["score"],
+            p["traits"].items(),
+            key=lambda x: x[1],
             reverse=True
         )[:3]
 
-        confidence = round(min(1.0, math.log(m + 1) / 5), 2)
+        for trait, score in top:
+            lines.append(f"• {trait} ({round(score / m, 2)})")
 
-        chat = f"🧠 {p['display_name']} ({confidence})"
-        for t in top:
-            chat += f"\n• {t['trait']} ({t['score']})"
+    if len(lines) == 1:
+        lines.append("No usable profiles yet.")
 
-        profiles.append({
-            "uuid": uuid,
-            "display_name": p["display_name"],
-            "confidence": confidence,
-            "top_traits": top,
-            "chat": chat
-        })
+    message = "\n".join(lines)
 
-        chat_lines.append(chat)
+    PROFILE_CACHE["data"] = message
+    PROFILE_CACHE["ts"] = now
 
-    result = {
-        "profiles": profiles,
-        "chat_message": "\n".join(chat_lines)
-    }
+    return Response(message, mimetype="text/plain")
 
-    PROFILE_CACHE.update({"data": result, "ts": now})
-    return jsonify(result)
-
-# =====================================
+# =================================================
 # HEALTH
-# =====================================
+# =================================================
 
 @app.route("/")
 def ok():
