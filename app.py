@@ -1,38 +1,29 @@
-from flask import Flask, request
-from openai import OpenAI
+from flask import Flask, request, jsonify
 import os, time, math, random, requests, json, re
 
-# =================================================
+# =====================================
 # APP SETUP
-# =================================================
+# =====================================
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
-GOOGLE_PROFILES_FEED  = os.environ["GOOGLE_PROFILES_FEED"]
-PROFILE_BUILD_KEY     = os.environ["PROFILE_BUILD_KEY"]
+GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
+PROFILE_BUILD_KEY   = os.environ["PROFILE_BUILD_KEY"]
 
-# =================================================
+# =====================================
 # CACHE
-# =================================================
+# =====================================
 
 PROFILE_CACHE = {"data": None, "ts": 0}
-CACHE_TTL = 300  # seconds
+CACHE_TTL = 300
 
-# =================================================
-# GVIZ PARSER (CLEAN + SAFE)
-# =================================================
+# =====================================
+# GVIZ PARSER (STABLE)
+# =====================================
 
 def fetch_gviz_rows(url):
-    r = requests.get(
-        url,
-        headers={"User-Agent": "Mozilla/5.0"},
-        timeout=20
-    )
-
-    # Extract JSON from GVIZ wrapper
-    match = re.search(r"setResponse\((\{.*\})\);?", r.text, re.S)
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+    match = re.search(r"setResponse\((\{.*\})\);", r.text, re.S)
     if not match:
         raise ValueError("GVIZ payload not found")
 
@@ -42,17 +33,17 @@ def fetch_gviz_rows(url):
     cols = [c["label"] for c in table["cols"]]
     rows = []
 
-    for r in table["rows"]:
-        row = {}
-        for i, cell in enumerate(r["c"]):
-            row[cols[i]] = cell["v"] if cell else 0
-        rows.append(row)
+    for row in table["rows"]:
+        obj = {}
+        for i, cell in enumerate(row["c"]):
+            obj[cols[i]] = cell["v"] if cell else 0
+        rows.append(obj)
 
     return rows
 
-# =================================================
-# TIME DECAY
-# =================================================
+# =====================================
+# DECAY
+# =====================================
 
 def decay_weight(ts):
     try:
@@ -63,84 +54,22 @@ def decay_weight(ts):
     except:
         return 0.0
 
-# =================================================
-# GPT ANALYSIS (OPTIONAL)
-# =================================================
-
-HUMOR_STYLES = [
-    "Dry analytical social commentary.",
-    "Light sarcasm, internet fluent.",
-    "Mock-bureaucratic tone.",
-    "Warm conversational instigator."
-]
-
-@app.route("/analyze", methods=["POST"])
-def analyze():
-    data = request.json or {}
-    stats = data.get("stats", {})
-    context = data.get("context", "")
-
-    persona = random.choice(HUMOR_STYLES)
-
-    prompt = f"""
-{persona}
-
-Conversation:
-{context}
-
-Metrics:
-Messages: {stats.get("messages")}
-Caps: {stats.get("caps")}
-Short: {stats.get("short")}
-Questions: {stats.get("questions")}
-
-Return EXACTLY:
-Archetype: <short title>
-Description: <one sentence>
-"""
-
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "system", "content": prompt}],
-        max_tokens=80
-    )
-
-    return {"result": res.choices[0].message.content.strip()}
-
-# =================================================
-# DATA COLLECTOR
-# =================================================
-
-@app.route("/collect", methods=["POST"])
-def collect():
-    data = request.get_json(silent=True)
-    if not data:
-        return {"error": "No JSON"}, 400
-
-    r = requests.post(GOOGLE_SHEET_ENDPOINT, json=data, timeout=10)
-    if r.status_code != 200:
-        return {"error": "Sheet write failed"}, 500
-
-    return {"status": "ok"}
-
-# =================================================
-# PROFILE BUILDER (SL-SAFE OUTPUT)
-# =================================================
+# =====================================
+# PROFILE BUILDER
+# =====================================
 
 @app.route("/build_profiles", methods=["POST"])
 def build_profiles():
     if request.headers.get("X-Profile-Key") != PROFILE_BUILD_KEY:
-        return {"error": "Unauthorized"}, 401
+        return jsonify({"error": "Unauthorized"}), 401
 
     now = time.time()
     if PROFILE_CACHE["data"] and now - PROFILE_CACHE["ts"] < CACHE_TTL:
-        return app.response_class(
-            response=json.dumps(PROFILE_CACHE["data"]),
-            mimetype="application/json"
-        )
+        return jsonify(PROFILE_CACHE["data"])
 
     rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
-    profiles = {}
+
+    raw = {}
 
     for r in rows:
         try:
@@ -151,80 +80,82 @@ def build_profiles():
 
         w = decay_weight(ts)
 
-        p = profiles.setdefault(uuid, {
+        p = raw.setdefault(uuid, {
             "display_name": r.get("display_name", "Unknown"),
-            "t": {
-                "messages": 0,
-                "questions": 0,
-                "caps": 0,
-                "short": 0,
-                "attention": 0,
-                "connector": 0,
-                "pleasing": 0,
-                "combative": 0,
-                "curious": 0,
-                "dominant": 0,
-                "humor": 0,
-                "supportive": 0,
-            }
+            "messages": 0,
+            "questions": 0,
+            "caps": 0,
+            "short": 0,
+            "humor": 0,
+            "curious": 0,
+            "dominant": 0,
+            "supportive": 0,
+            "engaging": 0,
+            "combative": 0,
         })
 
-        t = p["t"]
-        t["messages"]   += max(float(r.get("messages", 0)), 1) * w
-        t["questions"]  += float(r.get("questions", 0)) * w
-        t["caps"]       += float(r.get("caps", 0)) * w
-        t["short"]      += float(r.get("short_msgs", 0)) * w
-        t["attention"]  += float(r.get("kw_attention", 0)) * w
-        t["connector"]  += float(r.get("kw_connector", 0)) * w
-        t["pleasing"]   += float(r.get("kw_pleasing", 0)) * w
-        t["combative"]  += float(r.get("kw_combative", 0)) * w
-        t["curious"]    += float(r.get("kw_curious", 0)) * w
-        t["dominant"]   += float(r.get("kw_dominant", 0)) * w
-        t["humor"]      += float(r.get("kw_humor", 0)) * w
-        t["supportive"] += float(r.get("kw_supportive", 0)) * w
+        p["messages"]   += max(float(r.get("messages", 0)), 1) * w
+        p["questions"]  += float(r.get("questions", 0)) * w
+        p["caps"]       += float(r.get("caps", 0)) * w
+        p["short"]      += float(r.get("short_msgs", 0)) * w
+        p["humor"]      += float(r.get("kw_humor", 0)) * w
+        p["curious"]    += float(r.get("kw_curious", 0)) * w
+        p["dominant"]   += float(r.get("kw_dominant", 0)) * w
+        p["supportive"] += float(r.get("kw_supportive", 0)) * w
+        p["engaging"]   += float(r.get("kw_attention", 0)) * w
+        p["combative"]  += float(r.get("kw_combative", 0)) * w
 
-    # ===============================
-    # FINAL SL-SAFE OUTPUT (ARRAY)
-    # ===============================
+    profiles = []
+    chat_lines = ["📊 Social Profiles:"]
 
-    output = []
-
-    for uuid, p in profiles.items():
-        m = max(p["t"]["messages"], 1)
+    for uuid, p in raw.items():
+        m = max(p["messages"], 1)
         if m < 5:
             continue
 
         traits = {
-            "curious":    (p["t"]["curious"] + p["t"]["questions"]) / m,
-            "dominant":   (p["t"]["dominant"] + p["t"]["caps"]) / m,
-            "supportive": p["t"]["supportive"] / m,
-            "humorous":   p["t"]["humor"] / m,
-            "engaging":   (p["t"]["attention"] + p["t"]["connector"]) / m,
-            "combative":  p["t"]["combative"] / m,
-            "concise":    1 - (p["t"]["short"] / m),
+            "concise":    1 - (p["short"] / m),
+            "engaging":   p["engaging"] / m,
+            "combative":  p["combative"] / m,
+            "humorous":   p["humor"] / m,
+            "curious":    (p["curious"] + p["questions"]) / m,
+            "dominant":   (p["dominant"] + p["caps"]) / m,
+            "supportive": p["supportive"] / m,
         }
 
-        output.append({
+        top = sorted(
+            [{"trait": k, "score": round(v, 2)} for k, v in traits.items()],
+            key=lambda x: x["score"],
+            reverse=True
+        )[:3]
+
+        confidence = round(min(1.0, math.log(m + 1) / 5), 2)
+
+        chat = f"🧠 {p['display_name']} ({confidence})"
+        for t in top:
+            chat += f"\n• {t['trait']} ({t['score']})"
+
+        profiles.append({
             "uuid": uuid,
             "display_name": p["display_name"],
-            "confidence": round(min(1.0, math.log(m + 1) / 5), 2),
-            "top_traits": sorted(
-                [{"trait": k, "score": round(v, 2)} for k, v in traits.items()],
-                key=lambda x: x["score"],
-                reverse=True
-            )[:5]   # LIMIT SIZE FOR SL
+            "confidence": confidence,
+            "top_traits": top,
+            "chat": chat
         })
 
-    PROFILE_CACHE.update({"data": output, "ts": now})
+        chat_lines.append(chat)
 
-    return app.response_class(
-        response=json.dumps(output, separators=(",", ":")),
-        mimetype="application/json"
-    )
+    result = {
+        "profiles": profiles,
+        "chat_message": "\n".join(chat_lines)
+    }
 
-# =================================================
+    PROFILE_CACHE.update({"data": result, "ts": now})
+    return jsonify(result)
+
+# =====================================
 # HEALTH
-# =================================================
+# =====================================
 
 @app.route("/")
 def ok():
