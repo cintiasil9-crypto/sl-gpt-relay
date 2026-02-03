@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from openai import OpenAI
 import os, time, math, random, requests, json, re
 
@@ -21,7 +21,7 @@ PROFILE_CACHE = {"data": None, "ts": 0}
 CACHE_TTL = 300  # seconds
 
 # =================================================
-# GVIZ PARSER (HARD SAFE)
+# GVIZ PARSER (CLEAN + SAFE)
 # =================================================
 
 def fetch_gviz_rows(url):
@@ -31,11 +31,8 @@ def fetch_gviz_rows(url):
         timeout=20
     )
 
-    text = r.text
-
-    # Google wraps data like:
-    # /*O_o*/ google.visualization.Query.setResponse({...});
-    match = re.search(r"setResponse\((\{.*\})\);?", text, re.S)
+    # Extract JSON from GVIZ wrapper
+    match = re.search(r"setResponse\((\{.*\})\);?", r.text, re.S)
     if not match:
         raise ValueError("GVIZ payload not found")
 
@@ -67,14 +64,14 @@ def decay_weight(ts):
         return 0.0
 
 # =================================================
-# GPT ANALYSIS (UNCHANGED)
+# GPT ANALYSIS (OPTIONAL)
 # =================================================
 
 HUMOR_STYLES = [
     "Dry analytical social commentary.",
-    "Light sarcasm. Internet fluent.",
+    "Light sarcasm, internet fluent.",
     "Mock-bureaucratic tone.",
-    "Warm instigation."
+    "Warm conversational instigator."
 ]
 
 @app.route("/analyze", methods=["POST"])
@@ -108,7 +105,7 @@ Description: <one sentence>
         max_tokens=80
     )
 
-    return jsonify({"result": res.choices[0].message.content.strip()})
+    return {"result": res.choices[0].message.content.strip()}
 
 # =================================================
 # DATA COLLECTOR
@@ -118,31 +115,29 @@ Description: <one sentence>
 def collect():
     data = request.get_json(silent=True)
     if not data:
-        return jsonify({"error": "No JSON"}), 400
-
-    if not GOOGLE_SHEET_ENDPOINT:
-        return jsonify({"error": "Sheet endpoint missing"}), 500
+        return {"error": "No JSON"}, 400
 
     r = requests.post(GOOGLE_SHEET_ENDPOINT, json=data, timeout=10)
     if r.status_code != 200:
-        return jsonify({"error": "Sheet write failed"}), 500
+        return {"error": "Sheet write failed"}, 500
 
-    return jsonify({"status": "ok"})
+    return {"status": "ok"}
 
 # =================================================
-# PROFILE ENGINE — LSL SAFE OUTPUT
+# PROFILE BUILDER (SL-SAFE OUTPUT)
 # =================================================
 
 @app.route("/build_profiles", methods=["POST"])
 def build_profiles():
     if request.headers.get("X-Profile-Key") != PROFILE_BUILD_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
+        return {"error": "Unauthorized"}, 401
 
     now = time.time()
-
-    # Cache hit
     if PROFILE_CACHE["data"] and now - PROFILE_CACHE["ts"] < CACHE_TTL:
-        return jsonify(PROFILE_CACHE["data"])
+        return app.response_class(
+            response=json.dumps(PROFILE_CACHE["data"]),
+            mimetype="application/json"
+        )
 
     rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
     profiles = {}
@@ -189,7 +184,7 @@ def build_profiles():
         t["supportive"] += float(r.get("kw_supportive", 0)) * w
 
     # ===============================
-    # BUILD LSL-SAFE ARRAY OUTPUT
+    # FINAL SL-SAFE OUTPUT (ARRAY)
     # ===============================
 
     output = []
@@ -200,13 +195,13 @@ def build_profiles():
             continue
 
         traits = {
-            "curious":      (p["t"]["curious"] + p["t"]["questions"]) / m,
-            "dominant":     (p["t"]["dominant"] + p["t"]["caps"]) / m,
-            "supportive":   p["t"]["supportive"] / m,
-            "humorous":     p["t"]["humor"] / m,
-            "engaging":     (p["t"]["attention"] + p["t"]["connector"]) / m,
-            "combative":    p["t"]["combative"] / m,
-            "concise":      1 - (p["t"]["short"] / m),
+            "curious":    (p["t"]["curious"] + p["t"]["questions"]) / m,
+            "dominant":   (p["t"]["dominant"] + p["t"]["caps"]) / m,
+            "supportive": p["t"]["supportive"] / m,
+            "humorous":   p["t"]["humor"] / m,
+            "engaging":   (p["t"]["attention"] + p["t"]["connector"]) / m,
+            "combative":  p["t"]["combative"] / m,
+            "concise":    1 - (p["t"]["short"] / m),
         }
 
         output.append({
@@ -217,11 +212,15 @@ def build_profiles():
                 [{"trait": k, "score": round(v, 2)} for k, v in traits.items()],
                 key=lambda x: x["score"],
                 reverse=True
-            )
+            )[:5]   # LIMIT SIZE FOR SL
         })
 
     PROFILE_CACHE.update({"data": output, "ts": now})
-    return jsonify(output)
+
+    return app.response_class(
+        response=json.dumps(output, separators=(",", ":")),
+        mimetype="application/json"
+    )
 
 # =================================================
 # HEALTH
