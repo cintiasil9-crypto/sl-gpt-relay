@@ -21,7 +21,7 @@ PROFILE_CACHE = {"data": None, "ts": 0}
 CACHE_TTL = 300  # seconds
 
 # =================================================
-# GVIZ PARSER (REAL FIX)
+# GVIZ PARSER (HARD SAFE)
 # =================================================
 
 def fetch_gviz_rows(url):
@@ -33,7 +33,7 @@ def fetch_gviz_rows(url):
 
     text = r.text
 
-    # Google ALWAYS wraps GVIZ like this:
+    # Google wraps data like:
     # /*O_o*/ google.visualization.Query.setResponse({...});
     match = re.search(r"setResponse\((\{.*\})\);?", text, re.S)
     if not match:
@@ -67,19 +67,15 @@ def decay_weight(ts):
         return 0.0
 
 # =================================================
-# HUMOR PERSONAS (GPT)
+# GPT ANALYSIS (UNCHANGED)
 # =================================================
 
 HUMOR_STYLES = [
-    "Dry analytical social commentary. Observational.",
-    "Light sarcasm. Internet fluent. No cruelty.",
-    "Mock-bureaucratic tone. Amused detachment.",
-    "Warm instigation that invites replies."
+    "Dry analytical social commentary.",
+    "Light sarcasm. Internet fluent.",
+    "Mock-bureaucratic tone.",
+    "Warm instigation."
 ]
-
-# =================================================
-# GPT ANALYSIS
-# =================================================
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -134,7 +130,7 @@ def collect():
     return jsonify({"status": "ok"})
 
 # =================================================
-# PROFILE ENGINE (FULL STATS)
+# PROFILE ENGINE — LSL SAFE OUTPUT
 # =================================================
 
 @app.route("/build_profiles", methods=["POST"])
@@ -143,11 +139,12 @@ def build_profiles():
         return jsonify({"error": "Unauthorized"}), 401
 
     now = time.time()
+
+    # Cache hit
     if PROFILE_CACHE["data"] and now - PROFILE_CACHE["ts"] < CACHE_TTL:
         return jsonify(PROFILE_CACHE["data"])
 
     rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
-
     profiles = {}
 
     for r in rows:
@@ -191,7 +188,11 @@ def build_profiles():
         t["humor"]      += float(r.get("kw_humor", 0)) * w
         t["supportive"] += float(r.get("kw_supportive", 0)) * w
 
-    results = {}
+    # ===============================
+    # BUILD LSL-SAFE ARRAY OUTPUT
+    # ===============================
+
+    output = []
 
     for uuid, p in profiles.items():
         m = max(p["t"]["messages"], 1)
@@ -208,7 +209,8 @@ def build_profiles():
             "concise":      1 - (p["t"]["short"] / m),
         }
 
-        results[uuid] = {
+        output.append({
+            "uuid": uuid,
             "display_name": p["display_name"],
             "confidence": round(min(1.0, math.log(m + 1) / 5), 2),
             "top_traits": sorted(
@@ -216,10 +218,10 @@ def build_profiles():
                 key=lambda x: x["score"],
                 reverse=True
             )
-        }
+        })
 
-    PROFILE_CACHE.update({"data": results, "ts": now})
-    return jsonify(results)
+    PROFILE_CACHE.update({"data": output, "ts": now})
+    return jsonify(output)
 
 # =================================================
 # HEALTH
