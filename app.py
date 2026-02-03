@@ -1,5 +1,4 @@
 from flask import Flask, request, Response
-from openai import OpenAI
 import os, time, math, requests, json, re
 
 # =================================================
@@ -7,11 +6,9 @@ import os, time, math, requests, json, re
 # =================================================
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-GOOGLE_SHEET_ENDPOINT = os.environ.get("GOOGLE_SHEET_ENDPOINT")
-GOOGLE_PROFILES_FEED  = os.environ["GOOGLE_PROFILES_FEED"]
-PROFILE_BUILD_KEY     = os.environ["PROFILE_BUILD_KEY"]
+GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
+PROFILE_BUILD_KEY   = os.environ["PROFILE_BUILD_KEY"]
 
 # =================================================
 # CACHE
@@ -71,42 +68,52 @@ def decay_weight(ts):
 def normalize_traits(traits, m):
     if m <= 0:
         return {k: 0 for k in traits}
-    return {k: round(v / m, 3) for k, v in traits.items()}
+    return {k: v / m for k, v in traits.items()}
 
 # =================================================
-# PERSONALITY ARCHETYPES (RULE-BASED)
+# DISPLAY HELPERS
+# =================================================
+
+def pct(v):
+    return f"{round(v * 100)}%"
+
+def confidence_pct(v):
+    return f"Confidence {round(v * 100)}%"
+
+# =================================================
+# PERSONALITY ARCHETYPES (REALISTIC THRESHOLDS)
 # =================================================
 
 ARCHETYPES = [
     {
-        "name": "Social Catalyst",
-        "rule": lambda t: t["engaging"] >= 0.6 and t["curious"] >= 0.4,
-        "summary": "Highly social and interaction-driven, actively pulling others into conversation."
-    },
-    {
-        "name": "Entertainer",
-        "rule": lambda t: t["humorous"] >= 0.6,
-        "summary": "Uses humor as a primary social tool and keeps interactions lively."
-    },
-    {
         "name": "Debater",
-        "rule": lambda t: t["combative"] >= 0.6,
+        "rule": lambda t: t["combative"] >= 0.15,
         "summary": "Engages through challenge and assertive dialogue, often steering discussions."
     },
     {
-        "name": "Quiet Thinker",
-        "rule": lambda t: t["concise"] >= 0.6 and t["curious"] >= 0.3,
-        "summary": "Speaks selectively but thoughtfully, favoring questions over dominance."
-    },
-    {
-        "name": "Support Anchor",
-        "rule": lambda t: t["supportive"] >= 0.5,
-        "summary": "Provides reassurance and emotional stability within group interactions."
+        "name": "Entertainer",
+        "rule": lambda t: t["humorous"] >= 0.20,
+        "summary": "Uses humor as a primary social tool and keeps interactions lively."
     },
     {
         "name": "Presence Dominator",
-        "rule": lambda t: t["dominant"] >= 0.6,
-        "summary": "Maintains conversational control and strong presence in social spaces."
+        "rule": lambda t: t["dominant"] >= 0.15,
+        "summary": "Maintains conversational control and a strong social presence."
+    },
+    {
+        "name": "Support Anchor",
+        "rule": lambda t: t["supportive"] >= 0.12,
+        "summary": "Provides reassurance and emotional stability within group interactions."
+    },
+    {
+        "name": "Social Catalyst",
+        "rule": lambda t: t["engaging"] >= 0.20 and t["curious"] >= 0.08,
+        "summary": "Highly social and interaction-driven, actively pulling others into conversation."
+    },
+    {
+        "name": "Quiet Thinker",
+        "rule": lambda t: t["concise"] >= 0.20 and t["curious"] >= 0.05,
+        "summary": "Speaks selectively but thoughtfully, favoring questions over dominance."
     },
 ]
 
@@ -115,7 +122,6 @@ def build_personality_summary(norm_traits, top_traits):
         if a["rule"](norm_traits):
             return f"{a['name']}: {a['summary']}"
 
-    # Fallback (always deterministic)
     return f"Primarily {top_traits[0][0]} with secondary tendencies toward {top_traits[1][0]}."
 
 # =================================================
@@ -132,7 +138,6 @@ def build_profiles():
         return Response(PROFILE_CACHE["data"], mimetype="text/plain")
 
     rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
-
     profiles = {}
 
     for r in rows:
@@ -180,15 +185,16 @@ def build_profiles():
         if m < 5:
             continue
 
-        confidence = round(min(1.0, math.log(m + 1) / 5), 2)
-        lines.append(f"\n🧠 {p['name']} ({confidence})")
+        confidence = min(1.0, math.log(m + 1) / 5)
+
+        lines.append(f"\n🧠 {p['name']}")
+        lines.append(f"{confidence_pct(confidence)}")
 
         norm = normalize_traits(p["traits"], m)
-
         top = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
 
         for trait, score in top:
-            lines.append(f"• {trait} ({score})")
+            lines.append(f"• {trait} ({pct(score)})")
 
         summary = build_personality_summary(norm, top)
         lines.append(f"🧩 {summary}")
