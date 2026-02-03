@@ -14,7 +14,7 @@ PROFILE_BUILD_KEY   = os.environ["PROFILE_BUILD_KEY"]
 # CACHE
 # =================================================
 
-PROFILE_CACHE = {"data": None, "profiles": {}, "ts": 0}
+CACHE = {"profiles": {}, "ts": 0}
 CACHE_TTL = 300  # seconds
 
 # =================================================
@@ -22,23 +22,14 @@ CACHE_TTL = 300  # seconds
 # =================================================
 
 def fetch_gviz_rows(url):
-    r = requests.get(
-        url,
-        headers={"User-Agent": "Mozilla/5.0"},
-        timeout=20
-    )
-
-    match = re.search(r"setResponse\((\{.*\})\);?", r.text, re.S)
-    if not match:
-        raise ValueError("GVIZ payload not found")
-
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+    match = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
     payload = json.loads(match.group(1))
-    table = payload["table"]
 
-    cols = [c["label"] for c in table["cols"]]
+    cols = [c["label"] for c in payload["table"]["cols"]]
     rows = []
 
-    for row in table["rows"]:
+    for row in payload["table"]["rows"]:
         record = {}
         for i, cell in enumerate(row["c"]):
             record[cols[i]] = cell["v"] if cell else 0
@@ -62,75 +53,26 @@ def decay_weight(ts):
         return 0.0
 
 # =================================================
-# NORMALIZATION
-# =================================================
-
-def normalize_traits(traits, m):
-    if m <= 0:
-        return {k: 0 for k in traits}
-    return {k: v / m for k, v in traits.items()}
-
-# =================================================
-# DISPLAY HELPERS
-# =================================================
-
-def pct(v):
-    return f"{round(v * 100)}%"
-
-def confidence_label(v):
-    return f"Confidence {round(v * 100)}%"
-
-# =================================================
-# ARCHETYPES (ORDER MATTERS)
+# ARCHETYPES
 # =================================================
 
 ARCHETYPES = [
-    {
-        "name": "Debater",
-        "rule": lambda t: t["combative"] >= 0.15,
-        "summary": "Engages through challenge and assertive dialogue."
-    },
-    {
-        "name": "Entertainer",
-        "rule": lambda t: t["humorous"] >= 0.20,
-        "summary": "Uses humor as a primary social tool."
-    },
-    {
-        "name": "Presence Dominator",
-        "rule": lambda t: t["dominant"] >= 0.15,
-        "summary": "Maintains conversational control and strong presence."
-    },
-    {
-        "name": "Support Anchor",
-        "rule": lambda t: t["supportive"] >= 0.12,
-        "summary": "Provides reassurance and emotional stability."
-    },
-    {
-        "name": "Social Catalyst",
-        "rule": lambda t: t["engaging"] >= 0.20 and t["curious"] >= 0.08,
-        "summary": "Actively pulls others into conversation."
-    },
-    {
-        "name": "Quiet Thinker",
-        "rule": lambda t: t["concise"] >= 0.20 and t["curious"] >= 0.05,
-        "summary": "Speaks selectively and thoughtfully."
-    },
+    ("Debater",            lambda t: t["combative"] >= 0.15),
+    ("Entertainer",        lambda t: t["humorous"] >= 0.20),
+    ("Presence Dominator", lambda t: t["dominant"] >= 0.15),
+    ("Support Anchor",     lambda t: t["supportive"] >= 0.12),
+    ("Social Catalyst",    lambda t: t["engaging"] >= 0.20 and t["curious"] >= 0.08),
+    ("Quiet Thinker",      lambda t: t["concise"] >= 0.20 and t["curious"] >= 0.05),
 ]
 
-def resolve_archetype(norm, top):
-    for a in ARCHETYPES:
-        if a["rule"](norm):
-            return a["name"], a["summary"]
-    return "Unclassified", f"Primarily {top[0][0]} with secondary {top[1][0]}."
-
 # =================================================
-# CORE PROFILE BUILD (USED BY ALL ENDPOINTS)
+# PROFILE BUILD
 # =================================================
 
 def build_profiles(force=False):
     now = time.time()
-    if PROFILE_CACHE["profiles"] and not force and now - PROFILE_CACHE["ts"] < CACHE_TTL:
-        return PROFILE_CACHE["profiles"]
+    if CACHE["profiles"] and not force and now - CACHE["ts"] < CACHE_TTL:
+        return CACHE["profiles"]
 
     rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
     profiles = {}
@@ -149,21 +91,21 @@ def build_profiles(force=False):
             "name": r.get("display_name", "Unknown"),
             "messages": 0,
             "traits": {
-                "concise": 0,
                 "engaging": 0,
+                "concise": 0,
                 "combative": 0,
                 "humorous": 0,
                 "curious": 0,
                 "dominant": 0,
-                "supportive": 0,
+                "supportive": 0
             }
         })
 
-        msg_count = max(float(r.get("messages", 0)), 1)
-        p["messages"] += msg_count * w
+        msg = max(float(r.get("messages", 1)), 1)
+        p["messages"] += msg * w
 
-        p["traits"]["concise"]    += (1 - float(r.get("short_msgs", 0))) * w
         p["traits"]["engaging"]   += (float(r.get("kw_attention", 0)) + float(r.get("kw_connector", 0))) * w
+        p["traits"]["concise"]    += (1 - float(r.get("short_msgs", 0))) * w
         p["traits"]["combative"]  += float(r.get("kw_combative", 0)) * w
         p["traits"]["humorous"]   += float(r.get("kw_humor", 0)) * w
         p["traits"]["curious"]    += (float(r.get("kw_curious", 0)) + float(r.get("questions", 0))) * w
@@ -174,18 +116,40 @@ def build_profiles(force=False):
     for p in profiles.values():
         m = p["messages"]
         p["confidence"] = min(1.0, math.log(m + 1) / 5) if m > 0 else 0
-        p["norm"] = normalize_traits(p["traits"], m)
+        norm = {k: (v / m if m else 0) for k, v in p["traits"].items()}
+        p["norm"] = norm
 
-        top = sorted(p["norm"].items(), key=lambda x: x[1], reverse=True)
-        archetype, summary = resolve_archetype(p["norm"], top)
+        top = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
+        p["top"] = top
 
-        p["archetype"] = archetype
-        p["summary"] = summary
-        p["top"] = top[:3]
+        p["archetype"] = "Unclassified"
+        for name, rule in ARCHETYPES:
+            if rule(norm):
+                p["archetype"] = name
+                break
 
-    PROFILE_CACHE["profiles"] = profiles
-    PROFILE_CACHE["ts"] = now
+    CACHE["profiles"] = profiles
+    CACHE["ts"] = now
     return profiles
+
+# =================================================
+# PROFILE FORMATTER (USED EVERYWHERE)
+# =================================================
+
+def format_profile(p):
+    lines = []
+    lines.append(f"🧠 {p['name']}")
+    lines.append(f"Confidence {round(p['confidence'] * 100)}%")
+
+    for trait, score in p["top"]:
+        lines.append(f"• {trait} ({round(score * 100)}%)")
+
+    if p["archetype"] != "Unclassified":
+        lines.append(f"🧩 {p['archetype']}")
+    else:
+        lines.append("🧩 Profile forming")
+
+    return "\n".join(lines)
 
 # =================================================
 # ENDPOINTS
@@ -197,37 +161,30 @@ def build_profiles_endpoint():
         return Response("Unauthorized", status=401)
 
     profiles = build_profiles(force=True)
-    lines = ["📊 Social Profiles:"]
+    blocks = ["📊 Social Profiles:"]
 
     for p in profiles.values():
         if p["messages"] < 2:
             continue
+        blocks.append("")
+        blocks.append(format_profile(p))
 
-        lines.append(f"\n🧠 {p['name']}")
-        lines.append(confidence_label(p["confidence"]))
-
-        for trait, score in p["top"]:
-            lines.append(f"• {trait} ({pct(score)})")
-
-        lines.append(f"🧩 {p['archetype']}: {p['summary']}")
-
-    return Response("\n".join(lines), mimetype="text/plain")
+    return Response("\n".join(blocks), mimetype="text/plain")
 
 # -------------------------------------------------
 
 @app.route("/list_profiles", methods=["GET"])
 def list_profiles():
     profiles = build_profiles()
-    lines = []
+    blocks = ["📊 Social Profiles:"]
 
     for p in profiles.values():
         if p["messages"] < 2:
             continue
-        lines.append(
-            f"{p['name']} — {pct(p['confidence'])} — {p['archetype']}"
-        )
+        blocks.append("")
+        blocks.append(format_profile(p))
 
-    return Response("\n".join(lines) or "No profiles yet.", mimetype="text/plain")
+    return Response("\n".join(blocks), mimetype="text/plain")
 
 # -------------------------------------------------
 
@@ -236,23 +193,22 @@ def lookup_avatars():
     profiles = build_profiles()
     uuids = request.get_json(force=True)
 
-    out = []
+    blocks = []
+
     for u in uuids:
         p = profiles.get(u)
-        if not p:
-            out.append("No rating yet")
+        blocks.append("")
+        if p:
+            blocks.append(format_profile(p))
         else:
-            out.append(
-                f"{p['name']} — {pct(p['confidence'])} — {p['archetype']}"
-            )
+            blocks.append("🧠 Unknown Avatar\nNo rating yet.")
 
-    return Response("\n".join(out), mimetype="text/plain")
+    return Response("\n".join(blocks), mimetype="text/plain")
 
 # -------------------------------------------------
 
 @app.route("/scan_now", methods=["POST"])
 def scan_now():
-    # Marker endpoint for HUD-triggered scans
     return Response("Scan triggered.", mimetype="text/plain")
 
 # =================================================
