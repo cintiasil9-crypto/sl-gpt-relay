@@ -53,7 +53,7 @@ def decay_weight(ts):
         return 0.0
 
 # =================================================
-# ARCHETYPES (EXPRESSIVE — RESTORED)
+# ARCHETYPES (EXPRESSIVE)
 # =================================================
 
 ARCHETYPES = [
@@ -90,6 +90,24 @@ ARCHETYPES = [
 ]
 
 # =================================================
+# KEYWORD BUCKETS (MODIFIERS)
+# =================================================
+
+FLIRTY_PHRASES = [
+    "you're cute", "youre cute", "you're hot", "i like you",
+    "come here", "come sit", "miss you"
+]
+FLIRTY_WORDS = ["cute", "hot", "sexy", "babe", "darling"]
+
+SEXUAL_PHRASES = [
+    "fuck me", "suck my", "ride you", "make you cum", "bend over"
+]
+
+CURSE_WORDS = [
+    "fuck", "shit", "bullshit", "asshole", "bitch", "damn"
+]
+
+# =================================================
 # PROFILE BUILD
 # =================================================
 
@@ -114,6 +132,7 @@ def build_profiles(force=False):
             "uuid": uuid,
             "name": r.get("display_name", "Unknown"),
             "messages": 0,
+            "words": 0,
             "traits": {
                 "engaging": 0,
                 "concise": 0,
@@ -122,12 +141,23 @@ def build_profiles(force=False):
                 "curious": 0,
                 "dominant": 0,
                 "supportive": 0
+            },
+            "modifiers": {
+                "flirty": 0,
+                "sexual": 0,
+                "curse": 0
             }
         })
 
         msg = max(float(r.get("messages", 1)), 1)
-        p["messages"] += msg * w
+        words = max(float(r.get("word_count", 5)), 5)
 
+        p["messages"] += msg * w
+        p["words"] += words * w
+
+        text = (r.get("context", "") or "").lower()
+
+        # ---- Core traits ----
         p["traits"]["engaging"]   += (float(r.get("kw_attention", 0)) + float(r.get("kw_connector", 0))) * w
         p["traits"]["concise"]    += (1 - float(r.get("short_msgs", 0))) * w
         p["traits"]["combative"]  += float(r.get("kw_combative", 0)) * w
@@ -136,17 +166,36 @@ def build_profiles(force=False):
         p["traits"]["dominant"]   += float(r.get("kw_dominant", 0)) * w
         p["traits"]["supportive"] += float(r.get("kw_supportive", 0)) * w
 
-    # Finalize profiles
+        # ---- Modifiers ----
+        for ph in FLIRTY_PHRASES:
+            if ph in text and "you" in text:
+                p["modifiers"]["flirty"] += 2 * w
+
+        for wrd in FLIRTY_WORDS:
+            if wrd in text and "you" in text:
+                p["modifiers"]["flirty"] += 1 * w
+
+        for ph in SEXUAL_PHRASES:
+            if ph in text:
+                p["modifiers"]["sexual"] += 3 * w
+
+        for cw in CURSE_WORDS:
+            if cw in text:
+                p["modifiers"]["curse"] += 1 * w
+
+    # =================================================
+    # FINALIZE PROFILES
+    # =================================================
+
     for p in profiles.values():
         m = p["messages"]
         p["confidence"] = min(1.0, math.log(m + 1) / 5) if m > 0 else 0
 
         norm = {k: (v / m if m else 0) for k, v in p["traits"].items()}
         p["norm"] = norm
+        p["top"] = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
 
-        top = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
-        p["top"] = top
-
+        # Archetype
         p["summary"] = None
         for a in ARCHETYPES:
             if a["rule"](norm):
@@ -154,16 +203,28 @@ def build_profiles(force=False):
                 break
 
         if not p["summary"]:
-            p["summary"] = (
-                f"Primarily {top[0][0]} with secondary tendencies toward {top[1][0]}."
-            )
+            p["summary"] = f"Primarily {p['top'][0][0]} with secondary tendencies toward {p['top'][1][0]}."
+
+        # Modifiers display
+        mods = []
+        if p["modifiers"]["flirty"] / max(m, 1) >= 0.08 and p["confidence"] >= 0.5:
+            mods.append("High Flirt Tendency")
+
+        if p["modifiers"]["sexual"] >= 5 and p["confidence"] >= 0.7:
+            mods.append("Explicit Sexual Language")
+
+        curse_density = p["modifiers"]["curse"] / max(p["words"], 1)
+        if curse_density > 0.10:
+            mods.append("Heavy Profanity Usage")
+
+        p["modifiers_display"] = mods
 
     CACHE["profiles"] = profiles
     CACHE["ts"] = now
     return profiles
 
 # =================================================
-# PROFILE FORMATTER (USED EVERYWHERE)
+# FORMATTER (USED EVERYWHERE)
 # =================================================
 
 def format_profile(p):
@@ -175,39 +236,25 @@ def format_profile(p):
         lines.append(f"• {trait} ({round(score * 100)}%)")
 
     lines.append(f"🧩 {p['summary']}")
+
+    if p["modifiers_display"]:
+        lines.append("⚠ Modifiers: " + ", ".join(p["modifiers_display"]))
+
     return "\n".join(lines)
 
 # =================================================
 # ENDPOINTS
 # =================================================
 
-@app.route("/build_profiles", methods=["POST"])
-def build_profiles_endpoint():
-    if request.headers.get("X-Profile-Key") != PROFILE_BUILD_KEY:
-        return Response("Unauthorized", status=401)
-
-    profiles = build_profiles(force=True)
-    blocks = ["📊 Social Profiles:"]
-
-    for p in profiles.values():
-        if p["messages"] < 2:
-            continue
-        blocks.append("")
-        blocks.append(format_profile(p))
-
-    return Response("\n".join(blocks), mimetype="text/plain")
-
 @app.route("/list_profiles", methods=["GET"])
 def list_profiles():
     profiles = build_profiles()
     blocks = ["📊 Social Profiles:"]
-
     for p in profiles.values():
         if p["messages"] < 2:
             continue
         blocks.append("")
         blocks.append(format_profile(p))
-
     return Response("\n".join(blocks), mimetype="text/plain")
 
 @app.route("/lookup_avatars", methods=["POST"])
@@ -223,7 +270,6 @@ def lookup_avatars():
             blocks.append(format_profile(p))
         else:
             blocks.append("🧠 Unknown Avatar\nNo rating yet.")
-
     return Response("\n".join(blocks), mimetype="text/plain")
 
 @app.route("/scan_now", methods=["POST"])
