@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from openai import OpenAI
 import os, time, math, random, requests, json, re
 
@@ -21,20 +21,16 @@ PROFILE_CACHE = {"data": None, "ts": 0}
 CACHE_TTL = 300  # seconds
 
 # =================================================
-# GVIZ PARSER (STABLE – DO NOT TOUCH)
+# GVIZ PARSER (DO NOT TOUCH)
 # =================================================
 
 def fetch_gviz_rows(url):
-    r = requests.get(
-        url,
-        headers={"User-Agent": "Mozilla/5.0"},
-        timeout=20
-    )
-
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
     text = r.text
+
     match = re.search(r"setResponse\((\{.*\})\);?", text, re.S)
     if not match:
-        raise RuntimeError("Invalid GViz response")
+        raise ValueError("GViz payload not found")
 
     payload = json.loads(match.group(1))
     table = payload["table"]
@@ -42,11 +38,11 @@ def fetch_gviz_rows(url):
     cols = [c["label"] for c in table["cols"]]
     rows = []
 
-    for r in table["rows"]:
-        row = {}
-        for i, cell in enumerate(r["c"]):
-            row[cols[i]] = cell["v"] if cell else 0
-        rows.append(row)
+    for row in table["rows"]:
+        rec = {}
+        for i, cell in enumerate(row["c"]):
+            rec[cols[i]] = cell["v"] if cell else 0
+        rows.append(rec)
 
     return rows
 
@@ -56,15 +52,15 @@ def fetch_gviz_rows(url):
 
 def decay_weight(ts):
     try:
-        age_days = (time.time() - int(ts)) / 86400
-        if age_days <= 1: return 1.0
-        if age_days <= 7: return 0.6
+        age = (time.time() - int(ts)) / 86400
+        if age <= 1: return 1.0
+        if age <= 7: return 0.6
         return 0.3
     except:
         return 0.0
 
 # =================================================
-# HUMOR PERSONAS
+# HUMOR PERSONAS (GPT)
 # =================================================
 
 HUMOR_STYLES = [
@@ -112,7 +108,7 @@ Description: <one sentence>
     return jsonify({"result": res.choices[0].message.content.strip()})
 
 # =================================================
-# DATA COLLECTOR
+# DATA COLLECTOR → GOOGLE SHEET
 # =================================================
 
 @app.route("/collect", methods=["POST"])
@@ -131,7 +127,7 @@ def collect():
     return jsonify({"status": "ok"})
 
 # =================================================
-# PROFILE ENGINE (RESTORED, FULL)
+# PROFILE ENGINE (THIS IS WHAT YOUR HUD EXPECTS)
 # =================================================
 
 @app.route("/build_profiles", methods=["POST"])
