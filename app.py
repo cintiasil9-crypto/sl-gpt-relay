@@ -7,6 +7,7 @@ import os, time, math, requests, json, re
 
 app = Flask(__name__)
 
+# REQUIRED ENV VAR (GViz feed → observations tab)
 GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
 
 # =================================================
@@ -23,8 +24,10 @@ CACHE_TTL = 300  # seconds
 def fetch_gviz_rows(url):
     r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
     match = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
-    payload = json.loads(match.group(1))
+    if not match:
+        return []
 
+    payload = json.loads(match.group(1))
     cols = [c["label"] for c in payload["table"]["cols"]]
     rows = []
 
@@ -52,7 +55,7 @@ def decay_weight(ts):
         return 0.0
 
 # =================================================
-# KEYWORD BUCKETS
+# LANGUAGE BUCKETS
 # =================================================
 
 FLIRTY_PHRASES = [
@@ -70,7 +73,7 @@ CURSE_WORDS = [
 ]
 
 # =================================================
-# PROFILE BUILD (FROM OBSERVATIONS)
+# PROFILE BUILDER (GROUPED BY UUID)
 # =================================================
 
 def build_profiles(force=False):
@@ -78,13 +81,13 @@ def build_profiles(force=False):
     if CACHE["profiles"] and not force and now - CACHE["ts"] < CACHE_TTL:
         return CACHE["profiles"]
 
-    rows = fetch_gviz_rows(GOOGLE_OBSERVATIONS_FEED)
+    rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
     profiles = {}
 
     for r in rows:
         try:
             uuid = r["avatar_uuid"]
-            ts   = int(float(r["timestamp_utc"]))
+            ts = int(float(r["timestamp_utc"]))
         except:
             continue
 
@@ -96,13 +99,10 @@ def build_profiles(force=False):
             "messages": 0,
             "words": 0,
             "traits": {
-                "engaging": 0,
-                "concise": 0,
-                "combative": 0,
-                "humorous": 0,
                 "curious": 0,
+                "concise": 0,
                 "dominant": 0,
-                "supportive": 0
+                "humorous": 0
             },
             "modifiers": {
                 "flirty": 0,
@@ -112,7 +112,7 @@ def build_profiles(force=False):
         })
 
         msg_count = max(float(r.get("messages", 1)), 1)
-        word_count = max(float(r.get("word_count", 5)), 5)
+        word_count = max(float(r.get("word_count", 1)), 1)
 
         p["messages"] += msg_count * w
         p["words"] += word_count * w
@@ -121,25 +121,25 @@ def build_profiles(force=False):
         if not text:
             continue
 
-        # -----------------------
+        # --------------------
         # TRAITS (DERIVED)
-        # -----------------------
+        # --------------------
 
-        if r.get("questions", 0):
+        if r.get("questions", 0) > 0:
             p["traits"]["curious"] += 1 * w
 
-        if r.get("short_msgs", 0):
+        if r.get("short_msgs", 0) > 0:
             p["traits"]["concise"] += 1 * w
 
-        if r.get("caps", 0) > 5:
+        if r.get("caps", 0) >= 5:
             p["traits"]["dominant"] += 0.5 * w
 
-        if any(wrd in text for wrd in ["lol", "haha", "lmao"]):
+        if any(x in text for x in ["lol", "haha", "lmao"]):
             p["traits"]["humorous"] += 1 * w
 
-        # -----------------------
+        # --------------------
         # MODIFIERS (LANGUAGE)
-        # -----------------------
+        # --------------------
 
         for ph in FLIRTY_PHRASES:
             if ph in text and "you" in text:
@@ -158,7 +158,7 @@ def build_profiles(force=False):
                 p["modifiers"]["curse"] += 1 * w
 
     # =================================================
-    # FINALIZE
+    # FINALIZE PROFILES
     # =================================================
 
     for p in profiles.values():
@@ -167,7 +167,6 @@ def build_profiles(force=False):
         p["confidence"] = min(1.0, math.log(m + 1) / 5) if m > 0 else 0
 
         norm = {k: (v / m if m else 0) for k, v in p["traits"].items()}
-        p["norm"] = norm
         p["top"] = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
 
         mods = []
@@ -203,7 +202,7 @@ def format_profile(p):
     return "\n".join(lines)
 
 # =================================================
-# ENDPOINTS
+# ENDPOINTS (USED BY SL)
 # =================================================
 
 @app.route("/list_profiles", methods=["GET"])
