@@ -7,8 +7,10 @@ import os, time, math, requests, json, re
 
 app = Flask(__name__)
 
-# REQUIRED ENV VAR (Render)
-GOOGLE_OBSERVATIONS_FEED = os.environ["GOOGLE_OBSERVATIONS_FEED"]
+GOOGLE_OBSERVATIONS_FEED = os.environ.get("GOOGLE_OBSERVATIONS_FEED")
+
+if not GOOGLE_OBSERVATIONS_FEED:
+    raise RuntimeError("GOOGLE_OBSERVATIONS_FEED env var is missing")
 
 # =================================================
 # CACHE
@@ -18,29 +20,25 @@ CACHE = {"profiles": {}, "ts": 0}
 CACHE_TTL = 300  # seconds
 
 # =================================================
-# GVIZ PARSER (Google Sheets)
+# GVIZ PARSER (SAFE)
 # =================================================
 
 def fetch_gviz_rows(url):
-    r = requests.get(
-        url,
-        headers={"User-Agent": "Mozilla/5.0"},
-        timeout=20
-    )
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
 
-    match = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
+    match = re.search(r"setResponse\((\{.*\})\);?", r.text, re.S)
     if not match:
         raise RuntimeError("Invalid GViz response")
 
     payload = json.loads(match.group(1))
 
-    cols = [c["label"] for c in payload["table"]["cols"]]
+    cols = [c.get("label", "").strip() for c in payload["table"]["cols"]]
     rows = []
 
     for row in payload["table"]["rows"]:
         record = {}
         for i, cell in enumerate(row["c"]):
-            record[cols[i]] = cell["v"] if cell else 0
+            record[cols[i]] = cell["v"] if cell and "v" in cell else 0
         rows.append(record)
 
     return rows
@@ -68,7 +66,6 @@ FLIRTY_PHRASES = [
     "you're cute", "youre cute", "you're hot", "i like you",
     "come here", "come sit", "miss you"
 ]
-
 FLIRTY_WORDS = ["cute", "hot", "sexy", "babe", "darling"]
 
 SEXUAL_PHRASES = [
@@ -80,7 +77,7 @@ CURSE_WORDS = [
 ]
 
 # =================================================
-# PROFILE BUILDER (FROM OBSERVATIONS TAB)
+# PROFILE BUILD (FROM OBSERVATIONS)
 # =================================================
 
 def build_profiles(force=False):
@@ -95,7 +92,7 @@ def build_profiles(force=False):
     for r in rows:
         try:
             uuid = r["avatar_uuid"]
-            ts = int(float(r["timestamp_utc"]))
+            ts   = int(float(r["timestamp_utc"]))
         except:
             continue
 
@@ -107,13 +104,10 @@ def build_profiles(force=False):
             "messages": 0,
             "words": 0,
             "traits": {
-                "engaging": 0,
-                "concise": 0,
-                "combative": 0,
-                "humorous": 0,
                 "curious": 0,
+                "concise": 0,
                 "dominant": 0,
-                "supportive": 0
+                "humorous": 0
             },
             "modifiers": {
                 "flirty": 0,
@@ -123,7 +117,7 @@ def build_profiles(force=False):
         })
 
         msg_count  = max(float(r.get("messages", 1)), 1)
-        word_count = max(float(r.get("word_count", 5)), 5)
+        word_count = max(float(r.get("word_count", 1)), 1)
 
         p["messages"] += msg_count * w
         p["words"]    += word_count * w
@@ -142,7 +136,7 @@ def build_profiles(force=False):
         if r.get("short_msgs", 0):
             p["traits"]["concise"] += 1 * w
 
-        if r.get("caps", 0) > 5:
+        if r.get("caps", 0) >= 5:
             p["traits"]["dominant"] += 0.5 * w
 
         if any(x in text for x in ["lol", "haha", "lmao"]):
@@ -153,11 +147,11 @@ def build_profiles(force=False):
         # -----------------------
 
         for ph in FLIRTY_PHRASES:
-            if ph in text and "you" in text:
+            if ph in text:
                 p["modifiers"]["flirty"] += 2 * w
 
         for wrd in FLIRTY_WORDS:
-            if wrd in text and "you" in text:
+            if wrd in text:
                 p["modifiers"]["flirty"] += 1 * w
 
         for ph in SEXUAL_PHRASES:
@@ -169,26 +163,22 @@ def build_profiles(force=False):
                 p["modifiers"]["curse"] += 1 * w
 
     # =================================================
-    # FINALIZE PROFILES
+    # FINALIZE
     # =================================================
 
     for p in profiles.values():
-        m = p["messages"]
+        m = max(p["messages"], 1)
 
-        p["confidence"] = min(1.0, math.log(m + 1) / 5) if m > 0 else 0
+        p["confidence"] = min(1.0, math.log(m + 1) / 5)
 
-        norm = {k: (v / m if m else 0) for k, v in p["traits"].items()}
-        p["norm"] = norm
-        p["top"] = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
+        norm = {k: v / m for k, v in p["traits"].items()}
+        p["top"] = sorted(norm.items(), key=lambda x: x[1], reverse=True)
 
         mods = []
-
-        if p["modifiers"]["flirty"] / max(m, 1) >= 0.08:
+        if p["modifiers"]["flirty"] / m >= 0.08:
             mods.append("High Flirt Tendency")
-
         if p["modifiers"]["sexual"] >= 5:
             mods.append("Explicit Sexual Language")
-
         if p["modifiers"]["curse"] / max(p["words"], 1) > 0.10:
             mods.append("Heavy Profanity Usage")
 
@@ -208,7 +198,7 @@ def format_profile(p):
         f"Confidence {round(p['confidence'] * 100)}%"
     ]
 
-    for trait, score in p["top"]:
+    for trait, score in p["top"][:3]:
         lines.append(f"• {trait} ({round(score * 100)}%)")
 
     if p["modifiers_display"]:
@@ -224,29 +214,23 @@ def format_profile(p):
 def list_profiles():
     profiles = build_profiles()
     blocks = ["📊 Social Profiles:"]
-
     for p in profiles.values():
         if p["messages"] < 2:
             continue
         blocks.append("")
         blocks.append(format_profile(p))
-
     return Response("\n".join(blocks), mimetype="text/plain")
 
 @app.route("/lookup_avatars", methods=["POST"])
 def lookup_avatars():
     profiles = build_profiles()
-    uuids = request.get_json(force=True)
+    uuids = request.get_json(force=True) or []
 
     blocks = []
     for u in uuids:
         p = profiles.get(u)
         blocks.append("")
-        blocks.append(
-            format_profile(p)
-            if p else
-            "🧠 Unknown Avatar\nNo rating yet."
-        )
+        blocks.append(format_profile(p) if p else "🧠 Unknown Avatar\nNo rating yet.")
 
     return Response("\n".join(blocks), mimetype="text/plain")
 
