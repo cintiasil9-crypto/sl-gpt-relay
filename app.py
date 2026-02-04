@@ -8,7 +8,6 @@ import os, time, math, requests, json, re
 app = Flask(__name__)
 
 GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
-PROFILE_BUILD_KEY   = os.environ["PROFILE_BUILD_KEY"]
 
 # =================================================
 # CACHE
@@ -53,44 +52,25 @@ def decay_weight(ts):
         return 0.0
 
 # =================================================
-# ARCHETYPES (EXPRESSIVE — RESTORED)
+# KEYWORD BUCKETS
 # =================================================
 
-ARCHETYPES = [
-    {
-        "name": "Social Catalyst",
-        "rule": lambda t: t["engaging"] >= 0.20 and t["curious"] >= 0.08,
-        "summary": "Entertains and energizes social spaces, actively pulling others into conversation."
-    },
-    {
-        "name": "Entertainer",
-        "rule": lambda t: t["humorous"] >= 0.20,
-        "summary": "Uses humor as a primary social tool and keeps interactions lively."
-    },
-    {
-        "name": "Debater",
-        "rule": lambda t: t["combative"] >= 0.15,
-        "summary": "Engages through challenge and assertive dialogue, often steering discussions."
-    },
-    {
-        "name": "Quiet Thinker",
-        "rule": lambda t: t["concise"] >= 0.20 and t["curious"] >= 0.05,
-        "summary": "Speaks selectively but thoughtfully, favoring questions over dominance."
-    },
-    {
-        "name": "Support Anchor",
-        "rule": lambda t: t["supportive"] >= 0.12,
-        "summary": "Provides reassurance and emotional stability within group interactions."
-    },
-    {
-        "name": "Presence Dominator",
-        "rule": lambda t: t["dominant"] >= 0.15,
-        "summary": "Maintains conversational control and a strong social presence."
-    },
+FLIRTY_PHRASES = [
+    "you're cute", "youre cute", "you're hot", "i like you",
+    "come here", "come sit", "miss you"
+]
+FLIRTY_WORDS = ["cute", "hot", "sexy", "babe", "darling"]
+
+SEXUAL_PHRASES = [
+    "fuck me", "suck my", "ride you", "make you cum", "bend over"
+]
+
+CURSE_WORDS = [
+    "fuck", "shit", "bullshit", "asshole", "bitch", "damn"
 ]
 
 # =================================================
-# PROFILE BUILD
+# PROFILE BUILD (FROM OBSERVATIONS)
 # =================================================
 
 def build_profiles(force=False):
@@ -98,7 +78,7 @@ def build_profiles(force=False):
     if CACHE["profiles"] and not force and now - CACHE["ts"] < CACHE_TTL:
         return CACHE["profiles"]
 
-    rows = fetch_gviz_rows(GOOGLE_PROFILES_FEED)
+    rows = fetch_gviz_rows(GOOGLE_OBSERVATIONS_FEED)
     profiles = {}
 
     for r in rows:
@@ -114,6 +94,7 @@ def build_profiles(force=False):
             "uuid": uuid,
             "name": r.get("display_name", "Unknown"),
             "messages": 0,
+            "words": 0,
             "traits": {
                 "engaging": 0,
                 "concise": 0,
@@ -122,92 +103,118 @@ def build_profiles(force=False):
                 "curious": 0,
                 "dominant": 0,
                 "supportive": 0
+            },
+            "modifiers": {
+                "flirty": 0,
+                "sexual": 0,
+                "curse": 0
             }
         })
 
-        msg = max(float(r.get("messages", 1)), 1)
-        p["messages"] += msg * w
+        msg_count = max(float(r.get("messages", 1)), 1)
+        word_count = max(float(r.get("word_count", 5)), 5)
 
-        p["traits"]["engaging"]   += (float(r.get("kw_attention", 0)) + float(r.get("kw_connector", 0))) * w
-        p["traits"]["concise"]    += (1 - float(r.get("short_msgs", 0))) * w
-        p["traits"]["combative"]  += float(r.get("kw_combative", 0)) * w
-        p["traits"]["humorous"]   += float(r.get("kw_humor", 0)) * w
-        p["traits"]["curious"]    += (float(r.get("kw_curious", 0)) + float(r.get("questions", 0))) * w
-        p["traits"]["dominant"]   += float(r.get("kw_dominant", 0)) * w
-        p["traits"]["supportive"] += float(r.get("kw_supportive", 0)) * w
+        p["messages"] += msg_count * w
+        p["words"] += word_count * w
 
-    # Finalize profiles
+        text = (r.get("context_sample", "") or "").lower().strip()
+        if not text:
+            continue
+
+        # -----------------------
+        # TRAITS (DERIVED)
+        # -----------------------
+
+        if r.get("questions", 0):
+            p["traits"]["curious"] += 1 * w
+
+        if r.get("short_msgs", 0):
+            p["traits"]["concise"] += 1 * w
+
+        if r.get("caps", 0) > 5:
+            p["traits"]["dominant"] += 0.5 * w
+
+        if any(wrd in text for wrd in ["lol", "haha", "lmao"]):
+            p["traits"]["humorous"] += 1 * w
+
+        # -----------------------
+        # MODIFIERS (LANGUAGE)
+        # -----------------------
+
+        for ph in FLIRTY_PHRASES:
+            if ph in text and "you" in text:
+                p["modifiers"]["flirty"] += 2 * w
+
+        for wrd in FLIRTY_WORDS:
+            if wrd in text and "you" in text:
+                p["modifiers"]["flirty"] += 1 * w
+
+        for ph in SEXUAL_PHRASES:
+            if ph in text:
+                p["modifiers"]["sexual"] += 3 * w
+
+        for cw in CURSE_WORDS:
+            if cw in text:
+                p["modifiers"]["curse"] += 1 * w
+
+    # =================================================
+    # FINALIZE
+    # =================================================
+
     for p in profiles.values():
         m = p["messages"]
+
         p["confidence"] = min(1.0, math.log(m + 1) / 5) if m > 0 else 0
 
         norm = {k: (v / m if m else 0) for k, v in p["traits"].items()}
         p["norm"] = norm
+        p["top"] = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
 
-        top = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
-        p["top"] = top
+        mods = []
+        if p["modifiers"]["flirty"] / max(m, 1) >= 0.08:
+            mods.append("High Flirt Tendency")
+        if p["modifiers"]["sexual"] >= 5:
+            mods.append("Explicit Sexual Language")
+        if p["modifiers"]["curse"] / max(p["words"], 1) > 0.10:
+            mods.append("Heavy Profanity Usage")
 
-        p["summary"] = None
-        for a in ARCHETYPES:
-            if a["rule"](norm):
-                p["summary"] = f"{a['name']}: {a['summary']}"
-                break
-
-        if not p["summary"]:
-            p["summary"] = (
-                f"Primarily {top[0][0]} with secondary tendencies toward {top[1][0]}."
-            )
+        p["modifiers_display"] = mods
 
     CACHE["profiles"] = profiles
     CACHE["ts"] = now
     return profiles
 
 # =================================================
-# PROFILE FORMATTER (USED EVERYWHERE)
+# FORMATTER
 # =================================================
 
 def format_profile(p):
-    lines = []
-    lines.append(f"🧠 {p['name']}")
-    lines.append(f"Confidence {round(p['confidence'] * 100)}%")
+    lines = [
+        f"🧠 {p['name']}",
+        f"Confidence {round(p['confidence'] * 100)}%"
+    ]
 
     for trait, score in p["top"]:
         lines.append(f"• {trait} ({round(score * 100)}%)")
 
-    lines.append(f"🧩 {p['summary']}")
+    if p["modifiers_display"]:
+        lines.append("⚠ Modifiers: " + ", ".join(p["modifiers_display"]))
+
     return "\n".join(lines)
 
 # =================================================
 # ENDPOINTS
 # =================================================
 
-@app.route("/build_profiles", methods=["POST"])
-def build_profiles_endpoint():
-    if request.headers.get("X-Profile-Key") != PROFILE_BUILD_KEY:
-        return Response("Unauthorized", status=401)
-
-    profiles = build_profiles(force=True)
-    blocks = ["📊 Social Profiles:"]
-
-    for p in profiles.values():
-        if p["messages"] < 2:
-            continue
-        blocks.append("")
-        blocks.append(format_profile(p))
-
-    return Response("\n".join(blocks), mimetype="text/plain")
-
 @app.route("/list_profiles", methods=["GET"])
 def list_profiles():
     profiles = build_profiles()
     blocks = ["📊 Social Profiles:"]
-
     for p in profiles.values():
         if p["messages"] < 2:
             continue
         blocks.append("")
         blocks.append(format_profile(p))
-
     return Response("\n".join(blocks), mimetype="text/plain")
 
 @app.route("/lookup_avatars", methods=["POST"])
@@ -217,18 +224,10 @@ def lookup_avatars():
 
     blocks = []
     for u in uuids:
-        blocks.append("")
         p = profiles.get(u)
-        if p:
-            blocks.append(format_profile(p))
-        else:
-            blocks.append("🧠 Unknown Avatar\nNo rating yet.")
-
+        blocks.append("")
+        blocks.append(format_profile(p) if p else "🧠 Unknown Avatar\nNo rating yet.")
     return Response("\n".join(blocks), mimetype="text/plain")
-
-@app.route("/scan_now", methods=["POST"])
-def scan_now():
-    return Response("Scan triggered.", mimetype="text/plain")
 
 @app.route("/")
 def ok():
