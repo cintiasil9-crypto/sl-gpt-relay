@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 from openai import OpenAI
 import os, time, math, random, requests, json, re
 
@@ -25,12 +25,19 @@ CACHE_TTL = 300  # seconds
 # =================================================
 
 def fetch_gviz_rows(url):
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+    r = requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=20
+    )
+
     text = r.text
 
+    # Google GViz wrapper:
+    # google.visualization.Query.setResponse({...});
     match = re.search(r"setResponse\((\{.*\})\);?", text, re.S)
     if not match:
-        raise ValueError("GViz payload not found")
+        raise RuntimeError("Invalid GViz response")
 
     payload = json.loads(match.group(1))
     table = payload["table"]
@@ -38,11 +45,11 @@ def fetch_gviz_rows(url):
     cols = [c["label"] for c in table["cols"]]
     rows = []
 
-    for row in table["rows"]:
-        rec = {}
-        for i, cell in enumerate(row["c"]):
-            rec[cols[i]] = cell["v"] if cell else 0
-        rows.append(rec)
+    for r in table["rows"]:
+        row = {}
+        for i, cell in enumerate(r["c"]):
+            row[cols[i]] = cell["v"] if cell and "v" in cell else 0
+        rows.append(row)
 
     return rows
 
@@ -52,15 +59,15 @@ def fetch_gviz_rows(url):
 
 def decay_weight(ts):
     try:
-        age = (time.time() - int(ts)) / 86400
-        if age <= 1: return 1.0
-        if age <= 7: return 0.6
+        age_days = (time.time() - int(ts)) / 86400
+        if age_days <= 1: return 1.0
+        if age_days <= 7: return 0.6
         return 0.3
     except:
         return 0.0
 
 # =================================================
-# HUMOR PERSONAS (GPT)
+# HUMOR PERSONAS
 # =================================================
 
 HUMOR_STYLES = [
@@ -71,7 +78,7 @@ HUMOR_STYLES = [
 ]
 
 # =================================================
-# GPT ANALYSIS
+# GPT ANALYSIS (ARCHETYPES)
 # =================================================
 
 @app.route("/analyze", methods=["POST"])
@@ -108,7 +115,7 @@ Description: <one sentence>
     return jsonify({"result": res.choices[0].message.content.strip()})
 
 # =================================================
-# DATA COLLECTOR → GOOGLE SHEET
+# DATA COLLECTOR (HUD → SHEET)
 # =================================================
 
 @app.route("/collect", methods=["POST"])
@@ -127,7 +134,7 @@ def collect():
     return jsonify({"status": "ok"})
 
 # =================================================
-# PROFILE ENGINE (THIS IS WHAT YOUR HUD EXPECTS)
+# PROFILE ENGINE (THIS FEEDS THE HUD)
 # =================================================
 
 @app.route("/build_profiles", methods=["POST"])
