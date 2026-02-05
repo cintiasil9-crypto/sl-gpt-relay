@@ -8,7 +8,7 @@ import os, time, math, requests, json, re
 app = Flask(__name__)
 
 GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
-PROFILE_BUILD_KEY   = os.environ["PROFILE_BUILD_KEY"]
+PROFILE_BUILD_KEY   = os.environ.get("PROFILE_BUILD_KEY", "")
 
 # =================================================
 # CACHE
@@ -53,40 +53,16 @@ def decay_weight(ts):
         return 0.0
 
 # =================================================
-# ARCHETYPES (EXPRESSIVE — RESTORED)
+# ARCHETYPES
 # =================================================
 
 ARCHETYPES = [
-    {
-        "name": "Social Catalyst",
-        "rule": lambda t: t["engaging"] >= 0.20 and t["curious"] >= 0.08,
-        "summary": "Entertains and energizes social spaces, actively pulling others into conversation."
-    },
-    {
-        "name": "Entertainer",
-        "rule": lambda t: t["humorous"] >= 0.20,
-        "summary": "Uses humor as a primary social tool and keeps interactions lively."
-    },
-    {
-        "name": "Debater",
-        "rule": lambda t: t["combative"] >= 0.15,
-        "summary": "Engages through challenge and assertive dialogue, often steering discussions."
-    },
-    {
-        "name": "Quiet Thinker",
-        "rule": lambda t: t["concise"] >= 0.20 and t["curious"] >= 0.05,
-        "summary": "Speaks selectively but thoughtfully, favoring questions over dominance."
-    },
-    {
-        "name": "Support Anchor",
-        "rule": lambda t: t["supportive"] >= 0.12,
-        "summary": "Provides reassurance and emotional stability within group interactions."
-    },
-    {
-        "name": "Presence Dominator",
-        "rule": lambda t: t["dominant"] >= 0.15,
-        "summary": "Maintains conversational control and a strong social presence."
-    },
+    ("Debater",            lambda t: t["combative"] >= 0.15),
+    ("Entertainer",        lambda t: t["humorous"] >= 0.20),
+    ("Presence Dominator", lambda t: t["dominant"] >= 0.15),
+    ("Support Anchor",     lambda t: t["supportive"] >= 0.12),
+    ("Social Catalyst",    lambda t: t["engaging"] >= 0.20 and t["curious"] >= 0.08),
+    ("Quiet Thinker",      lambda t: t["concise"] >= 0.20 and t["curious"] >= 0.05),
 ]
 
 # =================================================
@@ -136,34 +112,29 @@ def build_profiles(force=False):
         p["traits"]["dominant"]   += float(r.get("kw_dominant", 0)) * w
         p["traits"]["supportive"] += float(r.get("kw_supportive", 0)) * w
 
-    # Finalize profiles
+    # Finalize
     for p in profiles.values():
         m = p["messages"]
         p["confidence"] = min(1.0, math.log(m + 1) / 5) if m > 0 else 0
 
-        norm = {k: (v / m if m else 0) for k, v in p["traits"].items()}
+        trait_sum = sum(p["traits"].values()) or 1
+        norm = {k: v / trait_sum for k, v in p["traits"].items()}
         p["norm"] = norm
 
-        top = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
-        p["top"] = top
+        p["top"] = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
 
-        p["summary"] = None
-        for a in ARCHETYPES:
-            if a["rule"](norm):
-                p["summary"] = f"{a['name']}: {a['summary']}"
+        p["archetype"] = "Unclassified"
+        for name, rule in ARCHETYPES:
+            if rule(norm):
+                p["archetype"] = name
                 break
-
-        if not p["summary"]:
-            p["summary"] = (
-                f"Primarily {top[0][0]} with secondary tendencies toward {top[1][0]}."
-            )
 
     CACHE["profiles"] = profiles
     CACHE["ts"] = now
     return profiles
 
 # =================================================
-# PROFILE FORMATTER (USED EVERYWHERE)
+# PROFILE FORMATTER
 # =================================================
 
 def format_profile(p):
@@ -172,9 +143,13 @@ def format_profile(p):
     lines.append(f"Confidence {round(p['confidence'] * 100)}%")
 
     for trait, score in p["top"]:
-        lines.append(f"• {trait} ({round(score * 100)}%)")
+        lines.append(f"• {trait} ({score * 100:.1f}%)")
 
-    lines.append(f"🧩 {p['summary']}")
+    if p["archetype"] != "Unclassified":
+        lines.append(f"🧩 {p['archetype']}")
+    else:
+        lines.append("🧩 Profile forming")
+
     return "\n".join(lines)
 
 # =================================================
@@ -207,19 +182,7 @@ def list_profiles():
 
     return Response("\n".join(blocks), mimetype="text/plain")
 
-
-@app.route("/list_profiles", methods=["GET"])
-def list_profiles():
-    profiles = build_profiles()
-    blocks = ["📊 Social Profiles:"]
-
-    for p in profiles.values():
-        if p["messages"] < 2:
-            continue
-        blocks.append("")
-        blocks.append(format_profile(p))
-
-    return Response("\n".join(blocks), mimetype="text/plain")
+# -------------------------------------------------
 
 @app.route("/lookup_avatars", methods=["POST"])
 def lookup_avatars():
@@ -227,6 +190,7 @@ def lookup_avatars():
     uuids = request.get_json(force=True)
 
     blocks = []
+
     for u in uuids:
         blocks.append("")
         p = profiles.get(u)
@@ -237,11 +201,14 @@ def lookup_avatars():
 
     return Response("\n".join(blocks), mimetype="text/plain")
 
+# -------------------------------------------------
+
 @app.route("/scan_now", methods=["POST"])
 def scan_now():
     return Response("Scan triggered.", mimetype="text/plain")
 
+# -------------------------------------------------
+
 @app.route("/")
 def ok():
     return "OK"
-
