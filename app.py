@@ -181,21 +181,32 @@ def format_profile(p):
 # ENDPOINTS
 # =================================================
 
-@app.route("/build_profiles", methods=["POST"])
-def build_profiles_endpoint():
-    if request.headers.get("X-Profile-Key") != PROFILE_BUILD_KEY:
-        return Response("Unauthorized", status=401)
+@app.route("/list_profiles", methods=["GET"])
+def list_profiles():
+    profiles = build_profiles()
 
-    profiles = build_profiles(force=True)
+    ranked = sorted(
+        profiles.values(),
+        key=lambda p: p["messages"],
+        reverse=True
+    )
+
     blocks = ["📊 Social Profiles:"]
+    count = 0
 
-    for p in profiles.values():
+    for p in ranked:
         if p["messages"] < 2:
             continue
+
         blocks.append("")
         blocks.append(format_profile(p))
 
+        count += 1
+        if count >= 5:
+            break
+
     return Response("\n".join(blocks), mimetype="text/plain")
+
 
 @app.route("/list_profiles", methods=["GET"])
 def list_profiles():
@@ -233,3 +244,4 @@ def scan_now():
 @app.route("/")
 def ok():
     return "OK"
+
