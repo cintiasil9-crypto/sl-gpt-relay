@@ -8,7 +8,6 @@ import os, time, math, requests, json, re
 app = Flask(__name__)
 
 GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
-PROFILE_BUILD_KEY   = os.environ.get("PROFILE_BUILD_KEY", "")
 
 # =================================================
 # CACHE
@@ -57,16 +56,16 @@ def decay_weight(ts):
 # =================================================
 
 ARCHETYPES = [
-    ("Debater",            lambda t: t["combative"] >= 0.15),
-    ("Entertainer",        lambda t: t["humorous"] >= 0.20),
-    ("Presence Dominator", lambda t: t["dominant"] >= 0.15),
-    ("Support Anchor",     lambda t: t["supportive"] >= 0.12),
-    ("Social Catalyst",    lambda t: t["engaging"] >= 0.20 and t["curious"] >= 0.08),
-    ("Quiet Thinker",      lambda t: t["concise"] >= 0.20 and t["curious"] >= 0.05),
+    ("Debater",            lambda t: t["combative"] >= 0.35),
+    ("Entertainer",        lambda t: t["humorous"] >= 0.35),
+    ("Presence Dominator", lambda t: t["dominant"] >= 0.30),
+    ("Support Anchor",     lambda t: t["supportive"] >= 0.30),
+    ("Social Catalyst",    lambda t: t["engaging"] >= 0.30 and t["curious"] >= 0.20),
+    ("Quiet Thinker",      lambda t: t["concise"] >= 0.60 and t["curious"] >= 0.15),
 ]
 
 # =================================================
-# PROFILE BUILD
+# BUILD PROFILES
 # =================================================
 
 def build_profiles(force=False):
@@ -92,38 +91,76 @@ def build_profiles(force=False):
             "messages": 0,
             "traits": {
                 "engaging": 0,
-                "concise": 0,
-                "combative": 0,
-                "humorous": 0,
                 "curious": 0,
+                "humorous": 0,
+                "combative": 0,
                 "dominant": 0,
-                "supportive": 0
+                "supportive": 0,
+                "concise": 0   # stores short_msgs COUNT
             }
         })
 
-        msg = max(float(r.get("messages", 1)), 1)
-        p["messages"] += msg * w
+        msg_count = max(int(r.get("messages", 1)), 1)
+        p["messages"] += msg_count * w
 
-        p["traits"]["engaging"]   += (float(r.get("kw_attention", 0)) + float(r.get("kw_connector", 0))) * w
-        p["traits"]["concise"]    += (1 - float(r.get("short_msgs", 0))) * w
-        p["traits"]["combative"]  += float(r.get("kw_combative", 0)) * w
-        p["traits"]["humorous"]   += float(r.get("kw_humor", 0)) * w
-        p["traits"]["curious"]    += (float(r.get("kw_curious", 0)) + float(r.get("questions", 0))) * w
-        p["traits"]["dominant"]   += float(r.get("kw_dominant", 0)) * w
-        p["traits"]["supportive"] += float(r.get("kw_supportive", 0)) * w
+        # keyword / behavior counts
+        p["traits"]["engaging"]   += (r.get("kw_attention", 0) + r.get("kw_connector", 0)) * w
+        p["traits"]["curious"]    += (r.get("questions", 0) + r.get("kw_curious", 0)) * w
+        p["traits"]["humorous"]   += r.get("kw_humor", 0) * w
+        p["traits"]["combative"]  += r.get("kw_combative", 0) * w
+        p["traits"]["dominant"]   += r.get("kw_dominant", 0) * w
+        p["traits"]["supportive"] += r.get("kw_supportive", 0) * w
+        p["traits"]["concise"]    += r.get("short_msgs", 0) * w
 
-    # Finalize
+    # =================================================
+    # FINAL CALCULATIONS
+    # =================================================
+
     for p in profiles.values():
-        m = p["messages"]
-        p["confidence"] = min(1.0, math.log(m + 1) / 5) if m > 0 else 0
+        m = max(int(p["messages"]), 1)
 
-        trait_sum = sum(p["traits"].values()) or 1
-        norm = {k: v / trait_sum for k, v in p["traits"].items()}
+        # --------------------------------
+        # CONFIDENCE (DATA RELIABILITY)
+        # --------------------------------
+        # 5 msgs  ≈ 25%
+        # 20 msgs ≈ 55%
+        # 50 msgs ≈ 80%
+        p["confidence"] = round(
+            min(1.0, 1 - math.exp(-m / 20)),
+            2
+        )
+
+        # --------------------------------
+        # NORMALIZED TRAITS (0–1)
+        # --------------------------------
+        norm = {}
+
+        norm["engaging"]   = min(1.0, p["traits"]["engaging"]   / m)
+        norm["curious"]    = min(1.0, p["traits"]["curious"]    / m)
+        norm["humorous"]   = min(1.0, p["traits"]["humorous"]   / m)
+        norm["combative"]  = min(1.0, p["traits"]["combative"]  / m)
+        norm["dominant"]   = min(1.0, p["traits"]["dominant"]   / m)
+        norm["supportive"] = min(1.0, p["traits"]["supportive"] / m)
+
+        # Concise = low short-message ratio
+        short_ratio = min(1.0, p["traits"]["concise"] / m)
+        norm["concise"] = round(1.0 - short_ratio, 2)
+
         p["norm"] = norm
 
-        p["top"] = sorted(norm.items(), key=lambda x: x[1], reverse=True)[:3]
+        # --------------------------------
+        # TOP TRAITS
+        # --------------------------------
+        p["top"] = sorted(
+            norm.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:3]
 
-        p["archetype"] = "Unclassified"
+        # --------------------------------
+        # ARCHETYPE
+        # --------------------------------
+        p["archetype"] = "Profile forming"
         for name, rule in ARCHETYPES:
             if rule(norm):
                 p["archetype"] = name
@@ -134,22 +171,18 @@ def build_profiles(force=False):
     return profiles
 
 # =================================================
-# PROFILE FORMATTER
+# FORMAT PROFILE (SL CHAT SAFE)
 # =================================================
 
 def format_profile(p):
     lines = []
     lines.append(f"🧠 {p['name']}")
-    lines.append(f"Confidence {round(p['confidence'] * 100)}%")
+    lines.append(f"Confidence {int(p['confidence'] * 100)}%")
 
     for trait, score in p["top"]:
-        lines.append(f"• {trait} ({score * 100:.1f}%)")
+        lines.append(f"• {trait} ({int(score * 100)}%)")
 
-    if p["archetype"] != "Unclassified":
-        lines.append(f"🧩 {p['archetype']}")
-    else:
-        lines.append("🧩 Profile forming")
-
+    lines.append(f"🧩 {p['archetype']}")
     return "\n".join(lines)
 
 # =================================================
@@ -182,8 +215,6 @@ def list_profiles():
 
     return Response("\n".join(blocks), mimetype="text/plain")
 
-# -------------------------------------------------
-
 @app.route("/lookup_avatars", methods=["POST"])
 def lookup_avatars():
     profiles = build_profiles()
@@ -192,8 +223,8 @@ def lookup_avatars():
     blocks = []
 
     for u in uuids:
-        blocks.append("")
         p = profiles.get(u)
+        blocks.append("")
         if p:
             blocks.append(format_profile(p))
         else:
@@ -201,13 +232,9 @@ def lookup_avatars():
 
     return Response("\n".join(blocks), mimetype="text/plain")
 
-# -------------------------------------------------
-
 @app.route("/scan_now", methods=["POST"])
 def scan_now():
     return Response("Scan triggered.", mimetype="text/plain")
-
-# -------------------------------------------------
 
 @app.route("/")
 def ok():
