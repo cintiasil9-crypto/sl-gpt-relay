@@ -321,12 +321,29 @@ def format_profile(p):
 def lookup():
     profiles = build_profiles()
     uuids = request.get_json(force=True)
-    out=[]
+    out = []
+
     for u in uuids:
-        out.append(format_profile(profiles.get(u,{"name":"Unknown","confidence":0,"norm":{}})))
+        out.append(
+            format_profile(
+                profiles.get(u, {
+                    "name": "Unknown",
+                    "confidence": 0,
+                    "norm": {},
+                    "gravity_norm": 0,
+                    "reputation": {"score": 0},
+                    "role": "Unknown",
+                    "archetype": "Profile forming",
+                    "style_norm": {},
+                    "troll_flag": False
+                })
+            )
+        )
+
     return Response("\n\n".join(out), mimetype="text/plain")
-    
-    @app.route("/leaderboard")
+
+
+@app.route("/leaderboard")
 def leaderboard():
     profiles = build_profiles()
 
@@ -361,4 +378,3 @@ def leaderboard():
 @app.route("/")
 def ok():
     return "OK"
-
