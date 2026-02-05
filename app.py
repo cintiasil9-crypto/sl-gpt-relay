@@ -1,4 +1,4 @@
-from flask import Flask, Response
+from flask import Flask, Response, request
 import os, time, math, requests, json, re
 
 # =================================================
@@ -12,10 +12,9 @@ CACHE = {"profiles": {}, "ts": 0}
 CACHE_TTL = 300
 
 # =================================================
-# WEIGHTS & MODIFIERS
+# WEIGHTS
 # =================================================
 
-# semantic keyword weights (personality drivers)
 TRAIT_KEYWORD_WEIGHTS = {
     "engaging":   1.6,
     "curious":    1.4,
@@ -25,7 +24,6 @@ TRAIT_KEYWORD_WEIGHTS = {
     "combative":  1.6,
 }
 
-# structural nudges (how they talk)
 STRUCTURAL_WEIGHTS = {
     "question":  0.15,
     "caps_dom":  0.15,
@@ -33,7 +31,6 @@ STRUCTURAL_WEIGHTS = {
     "concise":   1.0
 }
 
-# style (descriptive only)
 STYLE_WEIGHTS = {
     "flirty": 1.2,
     "sexual": 1.3,
@@ -43,13 +40,13 @@ STYLE_WEIGHTS = {
 STYLE_DISPLAY_MULTIPLIER = 1.8
 
 # =================================================
-# KEYWORDS (EXACT MATCH)
+# KEYWORDS
 # =================================================
 
 ENGAGING_WORDS  = {"hi","hey","hello","hiya","yo","welcome"}
 CURIOUS_WORDS   = {"why","how","what","where","when","who"}
 HUMOR_WORDS     = {"lol","lmao","haha","rofl"}
-SUPPORT_WORDS   = {"sorry","hope","hugs","hug","feel","better"}
+SUPPORT_WORDS   = {"sorry","hope","hugs","hug","better"}
 DOMINANT_WORDS  = {"listen","look","stop","enough","now"}
 COMBATIVE_WORDS = {"idiot","stupid","shut","wrong","wtf"}
 
@@ -60,7 +57,27 @@ CURSE_WORDS  = {"fuck","shit","damn","bitch","asshole","wtf"}
 NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
 
 # =================================================
-# KEYWORD PARSER (NEGATION AWARE)
+# FUNNY EXPLANATIONS
+# =================================================
+
+ARCHETYPE_EXPLANATIONS = {
+    "Social Catalyst": "Keeps conversations alive like caffeine for humans.",
+    "Entertainer": "Here for the laughs. Would absolutely bring snacks.",
+    "Debater": "Argues for sport. Facts optional. Passion mandatory.",
+    "Presence Dominator": "Enters rooms like a patch note nobody asked for.",
+    "Support Anchor": "Emotional first aid kit. Free hugs included.",
+    "Quiet Thinker": "Observes everything. Speaks when it matters.",
+    "Profile forming": "Still loading personality… please stand by."
+}
+
+STYLE_EXPLANATIONS = {
+    "flirty": "Harmless chaos. Compliments deployed strategically.",
+    "sexual": "Zero chill detected. Viewer discretion advised.",
+    "curse": "Uses swear words like punctuation."
+}
+
+# =================================================
+# KEYWORD PARSER
 # =================================================
 
 def extract_keyword_hits(text):
@@ -96,7 +113,7 @@ def extract_keyword_hits(text):
     return hits
 
 # =================================================
-# DATA FETCH + DECAY
+# DATA FETCH
 # =================================================
 
 def fetch_rows():
@@ -110,36 +127,35 @@ def fetch_rows():
     for row in payload["table"]["rows"]:
         rec = {}
         for i, cell in enumerate(row["c"]):
-            rec[cols[i]] = cell["v"] if cell else 0
+            rec[cols[i] if cols[i] else f"col_{i}"] = cell["v"] if cell else 0
         rows.append(rec)
     return rows
 
+# =================================================
+# DECAY
+# =================================================
+
 def decay_weight(ts):
     try:
-        days = (time.time() - int(ts)) / 86400
+        ts = int(float(ts))
+        days = (time.time() - ts) / 86400
         if days <= 1: return 1.0
         if days <= 7: return 0.6
         return 0.3
     except:
-        return 0.0
+        return 1.0
 
 # =================================================
-# ARCHETYPES (RELATIVE, NOT ABSOLUTE)
+# ARCHETYPES
 # =================================================
 
 ARCHETYPES = [
-    ("Social Catalyst",
-     lambda t: t["engaging"] >= 1.3 * t["concise"] and t["curious"] >= 0.04),
-    ("Entertainer",
-     lambda t: t["humorous"] >= max(t["engaging"], t["curious"]) and t["humorous"] >= 0.05),
-    ("Debater",
-     lambda t: t["combative"] >= max(t["supportive"], t["humorous"]) and t["combative"] >= 0.05),
-    ("Presence Dominator",
-     lambda t: t["dominant"] >= max(t["engaging"], t["curious"]) and t["dominant"] >= 0.05),
-    ("Support Anchor",
-     lambda t: t["supportive"] >= max(t["combative"], t["dominant"]) and t["supportive"] >= 0.05),
-    ("Quiet Thinker",
-     lambda t: t["concise"] >= max(t["engaging"], t["humorous"]) * 1.2),
+    ("Social Catalyst",     lambda t: t["engaging"] > t["concise"] and t["curious"] > 0.05),
+    ("Entertainer",         lambda t: t["humorous"] >= max(t["engaging"], t["curious"])),
+    ("Debater",             lambda t: t["combative"] >= max(t["supportive"], t["humorous"])),
+    ("Presence Dominator",  lambda t: t["dominant"] >= max(t["engaging"], t["curious"])),
+    ("Support Anchor",      lambda t: t["supportive"] >= max(t["combative"], t["dominant"])),
+    ("Quiet Thinker",       lambda t: t["concise"] >= max(t["engaging"], t["humorous"])),
 ]
 
 # =================================================
@@ -153,8 +169,12 @@ def build_profiles():
     profiles = {}
 
     for r in fetch_rows():
-        uuid = r["avatar_uuid"]
-        w = decay_weight(r["timestamp_utc"])
+        uuid = r.get("avatar_uuid")
+        if not uuid:
+            continue
+
+        ts = r.get("timestamp") or next(iter(r.values()), time.time())
+        w = decay_weight(ts)
 
         p = profiles.setdefault(uuid, {
             "name": r.get("display_name","Unknown"),
@@ -166,40 +186,28 @@ def build_profiles():
             "style": {"flirty":0,"sexual":0,"curse":0}
         })
 
-        msgs = max(int(r.get("messages",1)), 1)
+        msgs = max(int(r.get("messages",1)),1)
         p["messages"] += msgs * w
 
-        # concise (structural, unchanged)
-        p["traits"]["concise"] += (
-            (1 - r.get("short_msgs",0) / msgs)
-            * STRUCTURAL_WEIGHTS["concise"]
-            * w
-        )
-
-        # structural boosts
+        p["traits"]["concise"] += (1 - r.get("short_msgs",0)/msgs) * w
         p["traits"]["curious"] += r.get("question_count",0) * STRUCTURAL_WEIGHTS["question"] * w
         p["traits"]["dominant"] += r.get("caps_msgs",0) * STRUCTURAL_WEIGHTS["caps_dom"] * w
         p["traits"]["combative"] += r.get("caps_msgs",0) * STRUCTURAL_WEIGHTS["caps_comb"] * w
 
-        # semantic keywords
         hits = extract_keyword_hits(r.get("context_sample",""))
-        for k in ["engaging","curious","humorous","supportive","dominant","combative"]:
+
+        for k in TRAIT_KEYWORD_WEIGHTS:
             p["traits"][k] += hits[k] * TRAIT_KEYWORD_WEIGHTS[k] * w
-        for k in ["flirty","sexual","curse"]:
+        for k in STYLE_WEIGHTS:
             p["style"][k] += hits[k] * STYLE_WEIGHTS[k] * w
 
-    # finalize
     for p in profiles.values():
         m = max(p["messages"],1)
-
         norm = {k:min(v/m,1.0) for k,v in p["traits"].items()}
         p["norm"] = norm
 
-        # confidence (fixed)
         active = sum(1 for v in norm.values() if v > 0.03)
-        base = min(1.0, math.log(m + 1) / 4)
-        diversity = min(1.0, active / 4)
-        p["confidence"] = base * (0.4 + 0.6 * diversity)
+        p["confidence"] = min(1.0, (math.log(m+1)/4) * (0.5 + active/6))
 
         p["top"] = sorted(norm.items(), key=lambda x:x[1], reverse=True)[:3]
 
@@ -210,8 +218,8 @@ def build_profiles():
                 break
 
         p["style_norm"] = {
-            k: min((v / m) * STYLE_DISPLAY_MULTIPLIER, 1.0)
-            for k, v in p["style"].items()
+            k:min((v/m)*STYLE_DISPLAY_MULTIPLIER,1.0)
+            for k,v in p["style"].items()
         }
 
     CACHE["profiles"] = profiles
@@ -219,7 +227,7 @@ def build_profiles():
     return profiles
 
 # =================================================
-# FORMAT FOR SECOND LIFE
+# FORMAT FOR SL
 # =================================================
 
 def format_profile(p):
@@ -231,15 +239,16 @@ def format_profile(p):
     for t,v in p["top"]:
         lines.append(f"• {t} ({int(v*100)}%)")
 
-    lines.append(f"🧩 {p['archetype']}")
+    arch = p["archetype"]
+    lines.append(f"🧩 {arch}")
+    lines.append(f"   {ARCHETYPE_EXPLANATIONS.get(arch,'')}")
 
-    style_items = sorted(p["style_norm"].items(), key=lambda x:x[1], reverse=True)
-    styles = [f"• {k} ({int(v*100)}%)" for k,v in style_items if v > 0.03]
-
+    styles = [k for k,v in p["style_norm"].items() if v > 0.05]
     if styles:
         lines.append("")
         lines.append("Style:")
-        lines.extend(styles)
+        for k in styles:
+            lines.append(f"• {k} — {STYLE_EXPLANATIONS[k]}")
 
     return "\n".join(lines)
 
@@ -254,6 +263,21 @@ def list_profiles():
     for p in ranked[:5]:
         out.extend(["", format_profile(p)])
     return Response("\n".join(out), mimetype="text/plain")
+
+@app.route("/lookup_avatars", methods=["POST"])
+def lookup_avatars():
+    profiles = build_profiles()
+    uuids = request.get_json(force=True)
+
+    out = []
+    for u in uuids:
+        p = profiles.get(u)
+        if p:
+            out.extend(["", format_profile(p)])
+        else:
+            out.extend(["", "🧠 Unknown Avatar\nNo rating yet."])
+
+    return Response("\n".join(out) if out else "⚠️ No data returned.", mimetype="text/plain")
 
 @app.route("/")
 def ok():
