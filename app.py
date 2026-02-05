@@ -7,7 +7,7 @@ from collections import defaultdict
 # =================================================
 
 app = Flask(__name__)
-GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
+GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
 
 CACHE = {"profiles": {}, "ts": 0}
 CACHE_TTL = 300
@@ -57,16 +57,16 @@ CURSE_WORDS  = {"fuck","shit","damn","bitch","asshole","wtf"}
 NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
 
 # =================================================
-# ARCHETYPES
+# ARCHETYPES (SAFE .get())
 # =================================================
 
 ARCHETYPES = [
-    ("Social Catalyst",    lambda t: t["engaging"] > 0.12 and t["curious"] > 0.06),
-    ("Entertainer",        lambda t: t["humorous"] > 0.12),
-    ("Debater",            lambda t: t["combative"] > 0.12),
-    ("Presence Dominator", lambda t: t["dominant"] > 0.12),
-    ("Support Anchor",     lambda t: t["supportive"] > 0.12),
-    ("Quiet Thinker",      lambda t: t["concise"] > 0.18),
+    ("Social Catalyst",    lambda t: t.get("engaging",0) > 0.12 and t.get("curious",0) > 0.06),
+    ("Entertainer",        lambda t: t.get("humorous",0) > 0.12),
+    ("Debater",            lambda t: t.get("combative",0) > 0.12),
+    ("Presence Dominator", lambda t: t.get("dominant",0) > 0.12),
+    ("Support Anchor",     lambda t: t.get("supportive",0) > 0.12),
+    ("Quiet Thinker",      lambda t: t.get("concise",0) > 0.18),
 ]
 
 ARCHETYPE_EXPLANATIONS = {
@@ -98,14 +98,17 @@ def extract_keyword_hits(text):
 
     def negated(i):
         for j in range(i-4, i):
-            if j < 0: continue
-            if words[j] in {".","!","?"}: break
+            if j < 0:
+                continue
+            if words[j] in {".","!","?"}:
+                break
             if words[j] in NEGATORS:
                 return True
         return False
 
     for i, w in enumerate(words):
-        if negated(i): continue
+        if negated(i):
+            continue
 
         if w in ENGAGING_WORDS:  hits["engaging"] += 1
         if w in CURIOUS_WORDS:   hits["curious"] += 1
@@ -124,20 +127,24 @@ def extract_keyword_hits(text):
 # DECAY
 # =================================================
 
-def decay(ts, scale=86400):
+def decay(ts):
     try:
-        age = (time.time() - float(ts)) / scale
-        if age <= 1: return 1.0
-        if age <= 7: return 0.6
+        days = (time.time() - float(ts)) / 86400
+        if days <= 1:
+            return 1.0
+        if days <= 7:
+            return 0.6
         return 0.3
     except:
         return 1.0
 
 def style_decay(ts):
     try:
-        hrs = (time.time() - float(ts)) / 3600
-        if hrs <= 1: return 1.0
-        if hrs <= 6: return 0.4
+        hours = (time.time() - float(ts)) / 3600
+        if hours <= 1:
+            return 1.0
+        if hours <= 6:
+            return 0.4
         return 0.1
     except:
         return 0.3
@@ -148,7 +155,8 @@ def style_decay(ts):
 
 def fetch_rows():
     r = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
-    payload = json.loads(re.search(r"setResponse\((\{.*\})\)", r.text, re.S).group(1))
+    match = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
+    payload = json.loads(match.group(1))
     cols = [c["label"] for c in payload["table"]["cols"]]
 
     rows = []
@@ -169,20 +177,20 @@ def build_profiles():
 
     profiles = {}
     name_mentions = defaultdict(int)
-
     rows = fetch_rows()
 
-    # pass 1: detect name mentions
+    # detect name mentions
     for r in rows:
-        txt = r.get("context_sample","").lower()
+        text = r.get("context_sample","").lower()
         for other in rows:
             name = other.get("display_name","").lower()
-            if name and name in txt:
+            if name and name in text:
                 name_mentions[other.get("avatar_uuid")] += 1
 
     for r in rows:
         uuid = r.get("avatar_uuid")
-        if not uuid: continue
+        if not uuid:
+            continue
 
         ts = r.get("timestamp", time.time())
         w  = decay(ts)
@@ -221,7 +229,6 @@ def build_profiles():
             if k in STYLE_WEIGHTS:
                 p["style"][k] += v * STYLE_WEIGHTS[k] * sw
 
-        # gravity inference
         p["gravity"] += name_mentions[uuid] * 0.6 * w
         if " you " in f" {r.get('context_sample','').lower()} ":
             p["gravity"] += 0.4 * w
@@ -233,7 +240,6 @@ def build_profiles():
         p["norm"] = {k:min(v/m,1.0) for k,v in p["traits"].items()}
         p["gravity_norm"] = min(p["gravity"]/m,1.0)
 
-        # reputation drift
         signal = (
             p["norm"].get("engaging",0)
           + p["norm"].get("supportive",0)
@@ -241,7 +247,6 @@ def build_profiles():
         )
         p["reputation"]["score"] = p["reputation"]["score"]*0.92 + max(0,signal)*0.08
 
-        # troll detection
         p["troll_score"] = min(
             p["norm"].get("combative",0)*0.4 +
             (1-p["gravity_norm"])*0.4 +
@@ -250,14 +255,12 @@ def build_profiles():
         )
         p["troll_flag"] = p["troll_score"] > 0.65 and m > 12
 
-        # manipulation resistance
         vals = sorted(p["norm"].values(), reverse=True)
         imbalance = vals[0]-vals[2] if len(vals)>=3 else 0
         damp = 1 - min(imbalance*0.6,0.5)
         for k in p["norm"]:
             p["norm"][k] *= damp
 
-        # role
         performer = m*0.4 + p["gravity_norm"]*2 - p["norm"].get("concise",0)
         audience  = p["norm"].get("concise",0)*1.5 - p["gravity_norm"]
         p["role"] = "Performer" if performer > audience else "Audience"
@@ -301,10 +304,10 @@ def format_profile(p):
     lines.append(f"🧲 Social Gravity: {int(p['gravity_norm']*100)}%")
     lines.append(f"📈 Reputation: {int(p['reputation']['score']*100)}%")
 
-    if p["troll_flag"]:
+    if p.get("troll_flag"):
         lines.append("⚠️ Pattern detected: Disruptive influence")
 
-    styles = [(k,v) for k,v in p["style_norm"].items() if v>STYLE_DISPLAY_THRESHOLD]
+    styles = [(k,v) for k,v in p.get("style_norm",{}).items() if v>STYLE_DISPLAY_THRESHOLD]
     if styles:
         lines.append("")
         lines.append("Style:")
@@ -322,26 +325,19 @@ def lookup():
     profiles = build_profiles()
     uuids = request.get_json(force=True)
     out = []
-
     for u in uuids:
-        out.append(
-            format_profile(
-                profiles.get(u, {
-                    "name": "Unknown",
-                    "confidence": 0,
-                    "norm": {},
-                    "gravity_norm": 0,
-                    "reputation": {"score": 0},
-                    "role": "Unknown",
-                    "archetype": "Profile forming",
-                    "style_norm": {},
-                    "troll_flag": False
-                })
-            )
-        )
-
+        out.append(format_profile(profiles.get(u,{
+            "name":"Unknown",
+            "confidence":0,
+            "norm":{},
+            "gravity_norm":0,
+            "reputation":{"score":0},
+            "role":"Unknown",
+            "archetype":"Profile forming",
+            "style_norm":{},
+            "troll_flag":False
+        })))
     return Response("\n\n".join(out), mimetype="text/plain")
-
 
 @app.route("/leaderboard")
 def leaderboard():
@@ -350,20 +346,20 @@ def leaderboard():
     ranked = sorted(
         profiles.values(),
         key=lambda p: (
-            p.get("reputation", {}).get("score", 0),
-            p.get("gravity_norm", 0)
+            p.get("reputation",{}).get("score",0),
+            p.get("gravity_norm",0)
         ),
         reverse=True
     )
 
     out = []
-    for i, p in enumerate(ranked[:50], start=1):
+    for i,p in enumerate(ranked[:50],1):
         out.append({
             "rank": i,
             "name": p["name"],
-            "confidence": int(p["confidence"] * 100),
-            "reputation": int(p["reputation"]["score"] * 100),
-            "gravity": int(p["gravity_norm"] * 100),
+            "confidence": int(p["confidence"]*100),
+            "reputation": int(p["reputation"]["score"]*100),
+            "gravity": int(p["gravity_norm"]*100),
             "role": p["role"],
             "archetype": p["archetype"]
         })
@@ -371,9 +367,8 @@ def leaderboard():
     return Response(
         json.dumps(out),
         mimetype="application/json",
-        headers={"Access-Control-Allow-Origin": "*"}
+        headers={"Access-Control-Allow-Origin":"*"}
     )
-
 
 @app.route("/")
 def ok():
