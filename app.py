@@ -325,7 +325,40 @@ def lookup():
     for u in uuids:
         out.append(format_profile(profiles.get(u,{"name":"Unknown","confidence":0,"norm":{}})))
     return Response("\n\n".join(out), mimetype="text/plain")
+    
+    @app.route("/leaderboard")
+def leaderboard():
+    profiles = build_profiles()
+
+    ranked = sorted(
+        profiles.values(),
+        key=lambda p: (
+            p.get("reputation", {}).get("score", 0),
+            p.get("gravity_norm", 0)
+        ),
+        reverse=True
+    )
+
+    out = []
+    for i, p in enumerate(ranked[:50], start=1):
+        out.append({
+            "rank": i,
+            "name": p["name"],
+            "confidence": int(p["confidence"] * 100),
+            "reputation": int(p["reputation"]["score"] * 100),
+            "gravity": int(p["gravity_norm"] * 100),
+            "role": p["role"],
+            "archetype": p["archetype"]
+        })
+
+    return Response(
+        json.dumps(out),
+        mimetype="application/json",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
+
 
 @app.route("/")
 def ok():
     return "OK"
+
