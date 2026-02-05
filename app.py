@@ -37,7 +37,6 @@ STRUCTURAL_WEIGHTS = {
 }
 
 STYLE_DISPLAY_MULTIPLIER = 1.8
-STYLE_DISPLAY_THRESHOLD = 0.02
 
 # =================================================
 # KEYWORDS
@@ -57,7 +56,7 @@ CURSE_WORDS  = {"fuck","shit","damn","bitch","asshole","wtf"}
 NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
 
 # =================================================
-# ARCHETYPES (SAFE .get())
+# ARCHETYPES
 # =================================================
 
 ARCHETYPES = [
@@ -68,22 +67,6 @@ ARCHETYPES = [
     ("Support Anchor",     lambda t: t.get("supportive",0) > 0.12),
     ("Quiet Thinker",      lambda t: t.get("concise",0) > 0.18),
 ]
-
-ARCHETYPE_EXPLANATIONS = {
-    "Social Catalyst": "Keeps conversations alive like caffeine for humans.",
-    "Entertainer": "Here for the laughs. Would absolutely bring snacks.",
-    "Debater": "Argues for sport. Facts optional. Passion mandatory.",
-    "Presence Dominator": "Enters rooms like a patch note nobody asked for.",
-    "Support Anchor": "Emotional first aid kit. Free hugs included.",
-    "Quiet Thinker": "Observes everything. Speaks when it matters.",
-    "Profile forming": "Still loading personality… please stand by."
-}
-
-STYLE_EXPLANATIONS = {
-    "flirty": "Harmless chaos. Compliments deployed strategically.",
-    "sexual": "Zero chill detected. Viewer discretion advised.",
-    "curse": "Uses swear words like punctuation."
-}
 
 # =================================================
 # TEXT PARSING
@@ -130,10 +113,8 @@ def extract_keyword_hits(text):
 def decay(ts):
     try:
         days = (time.time() - float(ts)) / 86400
-        if days <= 1:
-            return 1.0
-        if days <= 7:
-            return 0.6
+        if days <= 1: return 1.0
+        if days <= 7: return 0.6
         return 0.3
     except:
         return 1.0
@@ -141,10 +122,8 @@ def decay(ts):
 def style_decay(ts):
     try:
         hours = (time.time() - float(ts)) / 3600
-        if hours <= 1:
-            return 1.0
-        if hours <= 6:
-            return 0.4
+        if hours <= 1: return 1.0
+        if hours <= 6: return 0.4
         return 0.1
     except:
         return 0.3
@@ -176,16 +155,7 @@ def build_profiles():
         return CACHE["profiles"]
 
     profiles = {}
-    name_mentions = defaultdict(int)
     rows = fetch_rows()
-
-    # detect name mentions
-    for r in rows:
-        text = r.get("context_sample","").lower()
-        for other in rows:
-            name = other.get("display_name","").lower()
-            if name and name in text:
-                name_mentions[other.get("avatar_uuid")] += 1
 
     for r in rows:
         uuid = r.get("avatar_uuid")
@@ -208,13 +178,7 @@ def build_profiles():
         msgs = max(int(r.get("messages",1)),1)
         p["messages"] += msgs * w
 
-        short = r.get("short_msgs",0)
-        p["traits"]["concise"] += (short / msgs) * 1.2 * w
-
-        density = min(msgs / 10, 1.0)
-        p["traits"]["engaging"] += density * 0.4 * w
-        p["traits"]["dominant"] += density * 0.6 * w
-
+        p["traits"]["concise"] += (r.get("short_msgs",0)/msgs) * 1.2 * w
         p["traits"]["curious"] += r.get("question_count",0) * STRUCTURAL_WEIGHTS["question"] * w
 
         caps = r.get("caps_msgs",0)
@@ -229,11 +193,7 @@ def build_profiles():
             if k in STYLE_WEIGHTS:
                 p["style"][k] += v * STYLE_WEIGHTS[k] * sw
 
-        p["gravity"] += name_mentions[uuid] * 0.6 * w
-        if " you " in f" {r.get('context_sample','').lower()} ":
-            p["gravity"] += 0.4 * w
-
-    # finalize
+    # FINALIZE
     for p in profiles.values():
         m = max(p["messages"],1)
 
@@ -247,23 +207,11 @@ def build_profiles():
         )
         p["reputation"]["score"] = p["reputation"]["score"]*0.92 + max(0,signal)*0.08
 
-        p["troll_score"] = min(
-            p["norm"].get("combative",0)*0.4 +
-            (1-p["gravity_norm"])*0.4 +
-            p["norm"].get("dominant",0)*0.2,
-            1.0
+        p["troll_flag"] = (
+            p["norm"].get("combative",0) > 0.25 and
+            p["norm"].get("dominant",0) > 0.25 and
+            m > 12
         )
-        p["troll_flag"] = p["troll_score"] > 0.65 and m > 12
-
-        vals = sorted(p["norm"].values(), reverse=True)
-        imbalance = vals[0]-vals[2] if len(vals)>=3 else 0
-        damp = 1 - min(imbalance*0.6,0.5)
-        for k in p["norm"]:
-            p["norm"][k] *= damp
-
-        performer = m*0.4 + p["gravity_norm"]*2 - p["norm"].get("concise",0)
-        audience  = p["norm"].get("concise",0)*1.5 - p["gravity_norm"]
-        p["role"] = "Performer" if performer > audience else "Audience"
 
         p["confidence"] = min(1.0, math.log(m+1)/4)
 
@@ -273,6 +221,8 @@ def build_profiles():
                 if rule(p["norm"]):
                     p["archetype"] = name
                     break
+
+        p["role"] = "Performer" if p["norm"].get("engaging",0) > p["norm"].get("concise",0) else "Audience"
 
         p["style_norm"] = {
             k:min((v/(m*0.25))*STYLE_DISPLAY_MULTIPLIER,1.0)
@@ -284,60 +234,8 @@ def build_profiles():
     return profiles
 
 # =================================================
-# OUTPUT
-# =================================================
-
-def format_profile(p):
-    lines = [
-        f"🧠 {p['name']}",
-        f"Confidence {int(p['confidence']*100)}%",
-    ]
-
-    for k,v in sorted(p["norm"].items(), key=lambda x:x[1], reverse=True)[:3]:
-        lines.append(f"• {k} ({int(v*100)}%)")
-
-    lines.append(f"🧩 {p['archetype']}")
-    lines.append(f"   {ARCHETYPE_EXPLANATIONS.get(p['archetype'],'')}")
-
-    lines.append("")
-    lines.append(f"🎭 Role: {p['role']}")
-    lines.append(f"🧲 Social Gravity: {int(p['gravity_norm']*100)}%")
-    lines.append(f"📈 Reputation: {int(p['reputation']['score']*100)}%")
-
-    if p.get("troll_flag"):
-        lines.append("⚠️ Pattern detected: Disruptive influence")
-
-    styles = [(k,v) for k,v in p.get("style_norm",{}).items() if v>STYLE_DISPLAY_THRESHOLD]
-    if styles:
-        lines.append("")
-        lines.append("Style:")
-        for k,v in styles:
-            lines.append(f"• {k} ({int(v*100)}%) — {STYLE_EXPLANATIONS[k]}")
-
-    return "\n".join(lines)
-
-# =================================================
 # ENDPOINTS
 # =================================================
-
-@app.route("/lookup_avatars", methods=["POST"])
-def lookup():
-    profiles = build_profiles()
-    uuids = request.get_json(force=True)
-    out = []
-    for u in uuids:
-        out.append(format_profile(profiles.get(u,{
-            "name":"Unknown",
-            "confidence":0,
-            "norm":{},
-            "gravity_norm":0,
-            "reputation":{"score":0},
-            "role":"Unknown",
-            "archetype":"Profile forming",
-            "style_norm":{},
-            "troll_flag":False
-        })))
-    return Response("\n\n".join(out), mimetype="text/plain")
 
 @app.route("/leaderboard")
 def leaderboard():
@@ -345,15 +243,12 @@ def leaderboard():
 
     ranked = sorted(
         profiles.values(),
-        key=lambda p: (
-            p.get("reputation",{}).get("score",0),
-            p.get("gravity_norm",0)
-        ),
+        key=lambda p: p.get("reputation",{}).get("score",0),
         reverse=True
     )
 
     out = []
-    for i,p in enumerate(ranked[:50],1):
+    for i,p in enumerate(ranked,1):
         out.append({
             "rank": i,
             "name": p["name"],
@@ -361,7 +256,11 @@ def leaderboard():
             "reputation": int(p["reputation"]["score"]*100),
             "gravity": int(p["gravity_norm"]*100),
             "role": p["role"],
-            "archetype": p["archetype"]
+            "archetype": p["archetype"],
+
+            "traits": {k:int(v*100) for k,v in p["norm"].items()},
+            "styles": {k:int(v*100) for k,v in p["style_norm"].items()},
+            "troll": bool(p["troll_flag"])
         })
 
     return Response(
