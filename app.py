@@ -38,6 +38,7 @@ STYLE_WEIGHTS = {
 }
 
 STYLE_DISPLAY_MULTIPLIER = 1.8
+STYLE_DISPLAY_THRESHOLD = 0.015   # lowered (Fix #3)
 
 # =================================================
 # KEYWORDS
@@ -57,7 +58,7 @@ CURSE_WORDS  = {"fuck","shit","damn","bitch","asshole","wtf"}
 NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
 
 # =================================================
-# FUNNY EXPLANATIONS
+# EXPLANATIONS
 # =================================================
 
 ARCHETYPE_EXPLANATIONS = {
@@ -77,7 +78,7 @@ STYLE_EXPLANATIONS = {
 }
 
 # =================================================
-# KEYWORD PARSER
+# KEYWORD PARSER (COUNTING + NEGATION)
 # =================================================
 
 def extract_keyword_hits(text):
@@ -99,16 +100,16 @@ def extract_keyword_hits(text):
         if negated(i):
             continue
 
-        if w in ENGAGING_WORDS:   hits["engaging"]   = 1
-        if w in CURIOUS_WORDS:    hits["curious"]    = 1
-        if w in HUMOR_WORDS:      hits["humorous"]   = 1
-        if w in SUPPORT_WORDS:    hits["supportive"] = 1
-        if w in DOMINANT_WORDS:   hits["dominant"]   = 1
-        if w in COMBATIVE_WORDS:  hits["combative"]  = 1
+        if w in ENGAGING_WORDS:   hits["engaging"]   += 1
+        if w in CURIOUS_WORDS:    hits["curious"]    += 1
+        if w in HUMOR_WORDS:      hits["humorous"]   += 1
+        if w in SUPPORT_WORDS:    hits["supportive"] += 1
+        if w in DOMINANT_WORDS:   hits["dominant"]   += 1
+        if w in COMBATIVE_WORDS:  hits["combative"]  += 1
 
-        if w in FLIRTY_WORDS:     hits["flirty"]     = 1
-        if w in SEXUAL_WORDS:     hits["sexual"]     = 1
-        if w in CURSE_WORDS:      hits["curse"]      = 1
+        if w in FLIRTY_WORDS:     hits["flirty"]     += 1
+        if w in SEXUAL_WORDS:     hits["sexual"]     += 1
+        if w in CURSE_WORDS:      hits["curse"]      += 1
 
     return hits
 
@@ -150,12 +151,12 @@ def decay_weight(ts):
 # =================================================
 
 ARCHETYPES = [
-    ("Social Catalyst",     lambda t: t["engaging"] > t["concise"] and t["curious"] > 0.05),
-    ("Entertainer",         lambda t: t["humorous"] >= max(t["engaging"], t["curious"])),
-    ("Debater",             lambda t: t["combative"] >= max(t["supportive"], t["humorous"])),
-    ("Presence Dominator",  lambda t: t["dominant"] >= max(t["engaging"], t["curious"])),
-    ("Support Anchor",      lambda t: t["supportive"] >= max(t["combative"], t["dominant"])),
-    ("Quiet Thinker",       lambda t: t["concise"] >= max(t["engaging"], t["humorous"])),
+    ("Social Catalyst",    lambda t: t["engaging"] > t["concise"] and t["curious"] > 0.05),
+    ("Entertainer",        lambda t: t["humorous"] >= max(t["engaging"], t["curious"])),
+    ("Debater",            lambda t: t["combative"] >= max(t["supportive"], t["humorous"])),
+    ("Presence Dominator", lambda t: t["dominant"] >= max(t["engaging"], t["curious"])),
+    ("Support Anchor",     lambda t: t["supportive"] >= max(t["combative"], t["dominant"])),
+    ("Quiet Thinker",      lambda t: t["concise"] >= max(t["engaging"], t["humorous"])),
 ]
 
 # =================================================
@@ -198,27 +199,30 @@ def build_profiles():
 
         for k in TRAIT_KEYWORD_WEIGHTS:
             p["traits"][k] += hits[k] * TRAIT_KEYWORD_WEIGHTS[k] * w
+
         for k in STYLE_WEIGHTS:
             p["style"][k] += hits[k] * STYLE_WEIGHTS[k] * w
 
+    # FINALIZE
     for p in profiles.values():
         m = max(p["messages"],1)
-        norm = {k:min(v/m,1.0) for k,v in p["traits"].items()}
-        p["norm"] = norm
 
-        active = sum(1 for v in norm.values() if v > 0.03)
+        p["norm"] = {k:min(v/m,1.0) for k,v in p["traits"].items()}
+
+        active = sum(1 for v in p["norm"].values() if v > 0.03)
         p["confidence"] = min(1.0, (math.log(m+1)/4) * (0.5 + active/6))
 
-        p["top"] = sorted(norm.items(), key=lambda x:x[1], reverse=True)[:3]
+        p["top"] = sorted(p["norm"].items(), key=lambda x:x[1], reverse=True)[:3]
 
         p["archetype"] = "Profile forming"
         for name, rule in ARCHETYPES:
-            if rule(norm):
+            if rule(p["norm"]):
                 p["archetype"] = name
                 break
 
+        # 🔥 FIX #2 — Style normalization (separate)
         p["style_norm"] = {
-            k:min((v/m)*STYLE_DISPLAY_MULTIPLIER,1.0)
+            k: min((v / max(1, m * 0.3)) * STYLE_DISPLAY_MULTIPLIER, 1.0)
             for k,v in p["style"].items()
         }
 
@@ -243,12 +247,12 @@ def format_profile(p):
     lines.append(f"🧩 {arch}")
     lines.append(f"   {ARCHETYPE_EXPLANATIONS.get(arch,'')}")
 
-    styles = [k for k,v in p["style_norm"].items() if v > 0.05]
+    styles = [(k,v) for k,v in p["style_norm"].items() if v > STYLE_DISPLAY_THRESHOLD]
     if styles:
         lines.append("")
         lines.append("Style:")
-        for k in styles:
-            lines.append(f"• {k} — {STYLE_EXPLANATIONS[k]}")
+        for k,v in sorted(styles, key=lambda x:x[1], reverse=True):
+            lines.append(f"• {k} ({int(v*100)}%) — {STYLE_EXPLANATIONS[k]}")
 
     return "\n".join(lines)
 
