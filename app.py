@@ -236,53 +236,39 @@ def list_profiles():
 @app.route("/leaderboard")
 def leaderboard():
     profiles = build_profiles()
-    rows = []
 
-    for p in profiles.values():
-        m = max(p.get("messages", 1), 1)
+    ranked = sorted(
+        profiles.values(),
+        key=lambda p: p.get("reputation",{}).get("score",0),
+        reverse=True
+    )
 
-        traits = p.get("traits", {})
-        styles = p.get("style", {})
-
-        def pct(v):
-            return int(min(v / m, 1.0) * 100)
-
-        row = {
+    out = []
+    for i,p in enumerate(ranked,1):
+        out.append({
+            "rank": i,
             "name": p["name"],
-            "confidence": int(p.get("confidence", 0) * 100),
-            "reputation": 0,
-            "gravity": 0,
-            "role": "Performer" if traits.get("engaging", 0) > traits.get("concise", 0) else "Audience",
-            "archetype": p.get("archetype", "Profile forming"),
+            "confidence": int(p["confidence"]*100),
+            "reputation": int(p["reputation"]["score"]*100),
+            "gravity": int(p["gravity_norm"]*100),
+            "role": p["role"],
+            "archetype": p["archetype"],
 
-            # TRAITS (FLAT — THIS IS THE KEY)
-            "engaging":   pct(traits.get("engaging", 0)),
-            "curious":    pct(traits.get("curious", 0)),
-            "humorous":   pct(traits.get("humorous", 0)),
-            "supportive": pct(traits.get("supportive", 0)),
-            "dominant":   pct(traits.get("dominant", 0)),
-            "combative":  pct(traits.get("combative", 0)),
-
-            # STYLE MODIFIERS (FLAT)
-            "flirty": pct(styles.get("flirty", 0)),
-            "sexual": pct(styles.get("sexual", 0)),
-            "curse":  pct(styles.get("curse", 0)),
-
-            # FLAGS
-            "troll": False
-        }
-
-        rows.append(row)
+            "traits": {k:int(v*100) for k,v in p["norm"].items()},
+            "styles": {k:int(v*100) for k,v in p["style_norm"].items()},
+            "troll": bool(p["troll_flag"])
+        })
 
     return Response(
-        json.dumps(rows),
+        json.dumps(out),
         mimetype="application/json",
-        headers={"Access-Control-Allow-Origin": "*"}
+        headers={"Access-Control-Allow-Origin":"*"}
     )
 
 @app.route("/")
 def ok():
     return "OK"
+
 
 
 
