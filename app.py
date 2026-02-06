@@ -37,7 +37,7 @@ STYLE_WEIGHTS = {
 # =================================================
 
 ENGAGING = {"hi","hey","yo","sup","wb","welcome"}
-CURIOUS = {"why","how","what","where","when","who"}
+CURIOUS = {"why","how","what","where","when","who","?"}
 HUMOR = {"lol","lmao","haha","rofl","😂","🤣"}
 SUPPORT = {"sorry","hope","ok","there","np","hug","hugs","here"}
 DOMINANT = {"listen","look","stop","wait","now"}
@@ -102,7 +102,7 @@ def fetch_rows():
     return rows
 
 # =================================================
-# SUMMARY ENGINE (TOP-3 + MODIFIER SEMANTICS)
+# SUMMARY ENGINE (UNCHANGED — PRESERVED)
 # =================================================
 
 PRIMARY_PHRASE = {
@@ -164,7 +164,6 @@ def build_summary(conf, traits, styles):
 
     base = ", ".join(x for x in [p1,p2,p3] if x)
 
-    # modifier selection
     mod = None
     for m in ["sexual","flirty","curse"]:
         if styles.get(m,0) >= 0.2:
@@ -218,17 +217,24 @@ def build_profiles():
     out=[]
     for p in profiles.values():
         m=max(p["messages"],1)
+
+        # confidence = data maturity ONLY
         confidence=min(1.0, math.log(m+1)/4)
+
+        # damp expressiveness by maturity
         damp=max(0.05, confidence**1.5)
 
         traits={}
         for k in TRAIT_WEIGHTS:
-            traits[k]=min((p["raw_traits"][k]/m)*damp,1.0)
+            raw=(p["raw_traits"][k]/m)*damp
+            traits[k]=min(raw,1.0)
 
         styles={}
         for k in STYLE_WEIGHTS:
-            styles[k]=min((p["raw_styles"][k]/(m*0.3))*damp,1.0)
+            raw=(p["raw_styles"][k]/(m*0.3))*damp
+            styles[k]=min(raw,1.0)
 
+        # derived signals
         risk=min((traits["combative"]+styles["curse"])*0.8,1.0)
         club=min((traits["dominant"]+styles["sexual"]+styles["curse"])*0.6,1.0)
         hangout=min((traits["supportive"]+traits["curious"])*0.6,1.0)
