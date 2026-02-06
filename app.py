@@ -13,247 +13,191 @@ CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
 
 # =================================================
-# KEYWORDS (TRAITS)
+# TRAITS / STYLES DEFINITIONS (ALWAYS PRESENT)
+# =================================================
+
+TRAITS = ["engaging","curious","humorous","supportive","dominant","combative"]
+STYLES = ["flirty","sexual","curse"]
+
+# =================================================
+# SL-CULTURE KEYWORDS
 # =================================================
 
 KEYWORDS = {
-    "engaging": {"hi","hey","hello","yo","welcome","anyone","sup"},
-    "curious": {"why","how","what","where","when","who"},
-    "humorous": {"lol","lmao","haha","rofl"},
-    "supportive": {"sorry","hope","hugs","hug","better","care","ok"},
-    "dominant": {"listen","look","stop","now","enough"},
-    "combative": {"idiot","stupid","shut","wrong","wtf"},
-    "flirty": {"cute","hot","handsome","beautiful","kiss","xoxo"},
-    "sexual": {"sex","fuck","horny","naked","hard","wet"},
-    "curse": {"fuck","shit","damn","bitch","asshole"}
+    "engaging":  {"hi","hey","hello","yo","sup","wb","welcome"},
+    "curious":   {"why","how","what","where","when","who"},
+    "humorous":  {"lol","lmao","haha","rofl","😂","🤣"},
+    "supportive":{"sorry","hope","hugs","hug","❤","💖","care"},
+    "dominant":  {"listen","look","stop","now","enough"},
+    "combative": {"idiot","stupid","shut","wtf","trash","drama"},
+
+    "flirty":    {"cute","hot","handsome","beautiful","kiss","xoxo","😘"},
+    "sexual":    {"sex","fuck","fucking","horny","wet","hard","naked"},
+    "curse":     {"fuck","shit","damn","bitch","asshole"}
 }
 
-NEGATORS = {"not","no","never","dont","can't","isn't"}
+NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
 
 # =================================================
-# CULTURE KEYWORDS
+# HELPERS
 # =================================================
 
-EMOJI_RE = re.compile(r"[😂🤣😍😘🔥💃🕺❤️💋]")
-
-CLUB_WORDS = {
-    "dance","dj","beat","club","song","music","spin","grind","party"
-}
-
-RP_WORDS = {
-    "kneel","obey","command","protect","draw","attack","enemy","sir","ma'am"
-}
-
-BUILDER_WORDS = {
-    "script","error","fix","help","how","why","build","mesh","lsl","texture"
-}
-
-# =================================================
-# CULTURE BADGES
-# =================================================
-
-CULTURE_BADGES = {
-    "club": "🪩 Club Energy",
-    "rp": "🎭 RP Mode",
-    "builder": "🛠️ Builder Brain"
-}
-
-# =================================================
-# SUMMARY PHRASES
-# =================================================
-
-TRAIT_PHRASES = {
-    "engaging": "naturally pulls people into conversation",
-    "curious": "asks questions others don’t think to ask",
-    "humorous": "keeps things light with humor",
-    "supportive": "brings steady, comforting energy",
-    "dominant": "likes steering the direction of the room",
-    "combative": "pushes back instead of letting things slide",
-    "flirty": "adds playful tension to interactions"
-}
-
-# =================================================
-# UTIL
-# =================================================
+def clamp(v): 
+    return max(0.0, min(v, 1.0))
 
 def extract_hits(text):
     hits = defaultdict(int)
-    words = re.findall(r"\b\w+\b", (text or "").lower())
-    for i, w in enumerate(words):
-        if any(n in words[max(0,i-3):i] for n in NEGATORS):
+    if not text:
+        return hits
+
+    words = re.findall(r"\b\w+\b", text.lower())
+    for i,w in enumerate(words):
+        if i > 0 and words[i-1] in NEGATORS:
             continue
-        for trait, vocab in KEYWORDS.items():
-            if w in vocab:
-                hits[trait] += 1
+        for k,ws in KEYWORDS.items():
+            if w in ws:
+                hits[k] += 1
     return hits
 
-def decay(ts):
-    try:
-        age = (time.time() - float(ts)) / 86400
-        return 1.0 if age < 1 else 0.6 if age < 7 else 0.3
-    except:
-        return 1.0
+def fetch_rows():
+    r = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
+    match = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
+    payload = json.loads(match.group(1))
+    cols = [c["label"] for c in payload["table"]["cols"]]
 
-def apply_culture_modifiers(traits, culture):
-    t = traits.copy()
-
-    if culture["club"] > 0.5:
-        t["flirty"] *= 1.1
-        t["sexual"] *= 0.7
-        t["combative"] *= 0.5
-
-    if culture["rp"] > 0.5:
-        t["dominant"] *= 1.1
-        t["supportive"] *= 1.1
-        t["combative"] *= 0.8
-
-    if culture["builder"] > 0.5:
-        t["curious"] *= 1.2
-        t["flirty"] *= 0.3
-        t["sexual"] *= 0.2
-
-    return t
+    rows = []
+    for row in payload["table"]["rows"]:
+        rec = {}
+        for i,cell in enumerate(row["c"]):
+            rec[cols[i] if cols[i] else f"col_{i}"] = cell["v"] if cell else 0
+        rows.append(rec)
+    return rows
 
 # =================================================
-# BUILD PROFILES
+# FUNNY SUMMARY + BADGES
+# =================================================
+
+def build_summary(name, conf, traits, styles, risk):
+    if conf < 20:
+        return "👻 Barely spoke. Vibes pending. Observed mostly breathing."
+
+    top = max(traits, key=traits.get)
+    tone = {
+        "engaging":"Talks to literally everyone.",
+        "curious":"Asks questions like an NPC with sentience.",
+        "humorous":"Here to joke, not to work.",
+        "supportive":"Therapist energy. Probably hugs strangers.",
+        "dominant":"Main character syndrome detected.",
+        "combative":"Thrives on chaos and local chat drama."
+    }[top]
+
+    spice = " ⚠️ spicy" if risk > 60 else ""
+    return f"{tone}{spice}"
+
+def build_badges(conf, traits, styles, risk):
+    badges = []
+    if conf < 20: badges.append("👀 Lurker")
+    if traits["humorous"] > 60: badges.append("🎤 Comedy HUD")
+    if traits["dominant"] > 60: badges.append("🗣️ Voice of the Sim")
+    if styles["flirty"] > 60: badges.append("💋 Flirt Warning")
+    if risk > 70: badges.append("🚨 Drama Magnet")
+    if traits["supportive"] > 60: badges.append("🫂 Comfort Avatar")
+    return badges
+
+# =================================================
+# CORE LOGIC
 # =================================================
 
 def build_profiles():
     if CACHE["profiles"] and time.time() - CACHE["ts"] < CACHE_TTL:
         return CACHE["profiles"]
 
-    r = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
-    payload = json.loads(re.search(r"setResponse\((\{.*\})\)", r.text, re.S).group(1))
-    cols = [c["label"] for c in payload["table"]["cols"]]
-
+    rows = fetch_rows()
     profiles = {}
 
-    for row in payload["table"]["rows"]:
-        rec = {cols[i]: (cell["v"] if cell else "") for i,cell in enumerate(row["c"])}
-        uid = rec.get("avatar_uuid")
+    for r in rows:
+        uid = r.get("avatar_uuid")
         if not uid:
             continue
 
         p = profiles.setdefault(uid,{
-            "name": rec.get("display_name","Unknown"),
+            "name": r.get("display_name","Unknown"),
             "messages": 0,
-            "raw": defaultdict(float),
-            "signals": defaultdict(float)
+            "raw": defaultdict(float)
         })
 
-        w = decay(rec.get("timestamp",time.time()))
-        p["messages"] += 1 * w
+        msgs = max(int(r.get("messages",1)),1)
+        p["messages"] += msgs
 
-        text = (rec.get("context_sample") or "").lower()
-        words = re.findall(r"\b\w+\b", text)
-
-        # culture signals
-        p["signals"]["msgs"] += 1
-        p["signals"]["short"] += 1 if len(words) <= 3 else 0
-        p["signals"]["emotes"] += 1 if re.search(r"\*.+?\*|/me\s", text) else 0
-        p["signals"]["emojis"] += len(EMOJI_RE.findall(text))
-        p["signals"]["club"] += sum(w in CLUB_WORDS for w in words)
-        p["signals"]["rp"] += sum(w in RP_WORDS for w in words)
-        p["signals"]["builder"] += sum(w in BUILDER_WORDS for w in words)
-
-        # trait hits
-        hits = extract_hits(text)
+        hits = extract_hits(r.get("context_sample",""))
         for k,v in hits.items():
-            p["raw"][k] += v * w
+            p["raw"][k] += v
 
-    results = []
+        # caps yelling = dominance + combativeness
+        caps = r.get("caps_msgs",0)
+        p["raw"]["dominant"] += caps * 0.4
+        p["raw"]["combative"] += caps * 0.25
+
+    output = []
 
     for p in profiles.values():
         m = max(p["messages"],1)
-        confidence = min(math.log(m+1)/4,1.0)
 
-        # culture probabilities
-        msgs = max(p["signals"]["msgs"],1)
-        club = (
-            (p["signals"]["short"]/msgs)*0.3 +
-            (p["signals"]["emotes"]/msgs)*0.25 +
-            (p["signals"]["emojis"]/msgs)*0.15 +
-            (p["signals"]["club"]/msgs)*0.3
-        )
-        rp = (
-            (p["signals"]["rp"]/msgs)*0.6 +
-            (1 - p["signals"]["short"]/msgs)*0.4
-        )
-        builder = (
-            (p["signals"]["builder"]/msgs)*0.6 +
-            (1 - p["signals"]["emotes"]/msgs)*0.4
+        # Bayesian smoothing baseline
+        traits = {}
+        for t in TRAITS:
+            traits[t] = clamp((p["raw"].get(t,0) + 1) / (m + 6))
+
+        styles = {}
+        for s in STYLES:
+            styles[s] = clamp((p["raw"].get(s,0) + 0.5) / (m + 8))
+
+        confidence = clamp(math.log(m+1)/4)
+        reputation = clamp(
+            traits["engaging"] +
+            traits["supportive"] -
+            traits["combative"]*0.6
         )
 
-        total_c = club + rp + builder or 1
-        culture = {
-            "club": club/total_c,
-            "rp": rp/total_c,
-            "builder": builder/total_c
-        }
-
-        # normalize traits relatively
-        raw = apply_culture_modifiers(p["raw"], culture)
-        total = sum(raw.values()) or 1
-
-        traits = {
-            k: min(int((v/total) * (0.4 + confidence) * 100), 85)
-            for k,v in raw.items()
-        }
-
-        styles = {
-            k: min(int(traits.get(k,0) * 0.8), 85)
-            for k in ["flirty","sexual","curse"]
-        }
-
-        # disruption (troll)
-        disruption = min(
-            traits.get("combative",0)*0.6 +
-            traits.get("dominant",0)*0.4,
-            100
+        risk = clamp(
+            traits["combative"]*0.6 +
+            traits["dominant"]*0.4 +
+            styles["curse"]*0.5
         )
 
-        # summary
-        main = max(traits, key=lambda k: traits[k])
-        summary = f"Often {TRAIT_PHRASES.get(main,'has a distinct presence')}. "
-        summary += (
-            "Early impressions only."
-            if confidence < 0.3 else
-            "Pattern is becoming clearer."
-            if confidence < 0.6 else
-            "Consistent behavior detected."
-        )
+        summary = build_summary(p["name"], confidence*100, traits, styles, risk*100)
+        badges = build_badges(confidence*100, traits, styles, risk*100)
 
-        culture_badges = [
-            CULTURE_BADGES[k]
-            for k,v in culture.items()
-            if v > 0.45
-        ][:2]
-
-        results.append({
+        output.append({
             "name": p["name"],
             "confidence": int(confidence*100),
-            "traits": traits,
-            "styles": styles,
-            "troll": disruption > 65,
+            "reputation": int(reputation*100),
+            "gravity": 0,
 
-            # new fields (safe to ignore in UI)
+            "role": "Performer" if traits["engaging"] > traits["curious"] else "Audience",
+            "archetype": "Profile forming" if confidence < 40 else max(traits, key=traits.get).title(),
+
             "summary": summary,
-            "culture": culture,
-            "culture_badges": culture_badges
+            "badges": badges,
+
+            "traits": {k:int(v*100) for k,v in traits.items()},
+            "styles": {k:int(v*100) for k,v in styles.items()},
+            "risk": int(risk*100)
         })
 
-    CACHE["profiles"] = results
+    CACHE["profiles"] = output
     CACHE["ts"] = time.time()
-    return results
+    return output
 
 # =================================================
-# ENDPOINTS
+# ENDPOINT
 # =================================================
 
 @app.route("/leaderboard")
 def leaderboard():
+    data = build_profiles()
     return Response(
-        json.dumps(build_profiles()),
+        json.dumps(data),
         mimetype="application/json",
         headers={"Access-Control-Allow-Origin":"*"}
     )
