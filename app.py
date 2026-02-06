@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify
+from flask import Flask, Response
 import os, time, math, requests, json, re
 
 # =================================================
@@ -37,13 +37,23 @@ CURSE_WORDS  = {"fuck","shit","damn","bitch","asshole","wtf"}
 NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
 
 # =================================================
-# STYLE EXPLANATIONS
+# EXPLANATIONS
 # =================================================
 
+TRAIT_EXPLANATIONS = {
+    "engaging":   "Initiates and sustains conversation.",
+    "curious":    "Asks questions and explores topics.",
+    "humorous":   "Uses jokes or playful language.",
+    "supportive": "Offers emotional or social support.",
+    "dominant":   "Attempts to direct or control conversation.",
+    "combative":  "Challenges or confronts others.",
+    "concise":    "Communicates efficiently with fewer words."
+}
+
 STYLE_EXPLANATIONS = {
-    "flirty": "Leans playful. Compliments deployed strategically.",
-    "sexual": "Not subtle. HR would like a word.",
-    "curse":  "Expressive vocabulary. Swears for emphasis."
+    "flirty": "Playful or affectionate tone.",
+    "sexual": "Explicit or suggestive language.",
+    "curse":  "Uses profanity for emphasis."
 }
 
 # =================================================
@@ -51,33 +61,27 @@ STYLE_EXPLANATIONS = {
 # =================================================
 
 ARCHETYPES = [
-    ("Social Catalyst",
-     "Keeps conversations alive like caffeine for humans.",
-     lambda t: t["engaging"]>=0.25 and t["curious"]>=0.15),
+    ("Social Catalyst", "Keeps conversations alive.",
+     lambda t: t["engaging"] >= 0.25 and t["curious"] >= 0.15),
 
-    ("Entertainer",
-     "Here for the laughs. Would absolutely bring snacks.",
-     lambda t: t["humorous"]>=0.20),
+    ("Entertainer", "Brings humor and energy.",
+     lambda t: t["humorous"] >= 0.20),
 
-    ("Debater",
-     "Thrives on disagreement. Argues for sport.",
-     lambda t: t["combative"]>=0.20),
+    ("Debater", "Thrives on disagreement.",
+     lambda t: t["combative"] >= 0.20),
 
-    ("Presence Dominator",
-     "Walks in like they own the sim. Sometimes they do.",
-     lambda t: t["dominant"]>=0.20),
+    ("Presence Dominator", "Commands attention.",
+     lambda t: t["dominant"] >= 0.20),
 
-    ("Support Anchor",
-     "Emotionally supportive. Probably gives good hugs.",
-     lambda t: t["supportive"]>=0.20),
+    ("Support Anchor", "Emotionally supportive.",
+     lambda t: t["supportive"] >= 0.20),
 
-    ("Quiet Thinker",
-     "Observes more than speaks. Brain always online.",
-     lambda t: t["concise"]>=0.30 and t["engaging"]<0.10),
+    ("Quiet Thinker", "Observes more than speaks.",
+     lambda t: t["concise"] >= 0.30 and t["engaging"] < 0.10),
 ]
 
 # =================================================
-# KEYWORD PARSER (NEGATION AWARE)
+# KEYWORD PARSER
 # =================================================
 
 def extract_keyword_hits(text):
@@ -86,6 +90,7 @@ def extract_keyword_hits(text):
         "supportive","dominant","combative",
         "flirty","sexual","curse"
     ]}
+
     if not text:
         return hits
 
@@ -97,34 +102,36 @@ def extract_keyword_hits(text):
     for i,w in enumerate(words):
         if neg(i): continue
 
-        if w in ENGAGING_WORDS:  hits["engaging"]   = 1
-        if w in CURIOUS_WORDS:   hits["curious"]    = 1
-        if w in HUMOR_WORDS:     hits["humorous"]   = 1
+        if w in ENGAGING_WORDS:  hits["engaging"] = 1
+        if w in CURIOUS_WORDS:   hits["curious"] = 1
+        if w in HUMOR_WORDS:     hits["humorous"] = 1
         if w in SUPPORT_WORDS:   hits["supportive"] = 1
-        if w in DOMINANT_WORDS:  hits["dominant"]   = 1
-        if w in COMBATIVE_WORDS: hits["combative"]  = 1
+        if w in DOMINANT_WORDS:  hits["dominant"] = 1
+        if w in COMBATIVE_WORDS: hits["combative"] = 1
 
         if w in FLIRTY_WORDS: hits["flirty"] = 1
         if w in SEXUAL_WORDS: hits["sexual"] = 1
-        if w in CURSE_WORDS:  hits["curse"]  = 1
+        if w in CURSE_WORDS:  hits["curse"] = 1
 
     return hits
 
 # =================================================
-# DATA + DECAY
+# FETCH DATA
 # =================================================
 
 def fetch_rows():
     r = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
     payload = json.loads(re.search(r"setResponse\((\{.*\})\)", r.text, re.S).group(1))
-    cols = [c["label"] for c in payload["table"]["cols"]]
 
+    cols = [c["label"] for c in payload["table"]["cols"]]
     rows = []
+
     for row in payload["table"]["rows"]:
         rec = {}
         for i,cell in enumerate(row["c"]):
             rec[cols[i]] = cell["v"] if cell else 0
         rows.append(rec)
+
     return rows
 
 def decay(ts):
@@ -149,13 +156,10 @@ def build_profiles():
         w = decay(r["timestamp_utc"])
 
         p = profiles.setdefault(uuid,{
-            "name":r.get("display_name","Unknown"),
-            "messages":0,
-            "traits":{k:0 for k in [
-                "engaging","curious","humorous",
-                "supportive","dominant","combative","concise"
-            ]},
-            "style":{"flirty":0,"sexual":0,"curse":0}
+            "name": r.get("display_name","Unknown"),
+            "messages": 0,
+            "traits": {k:0 for k in TRAIT_EXPLANATIONS},
+            "styles": {k:0 for k in STYLE_EXPLANATIONS}
         })
 
         msgs = max(int(r.get("messages",1)),1)
@@ -169,21 +173,20 @@ def build_profiles():
         hits = extract_keyword_hits(r.get("context_sample",""))
         for k in ["engaging","curious","humorous","supportive","dominant","combative"]:
             p["traits"][k] += hits[k] * w
-        for k in ["flirty","sexual","curse"]:
-            p["style"][k] += hits[k] * w
+        for k in p["styles"]:
+            p["styles"][k] += hits[k] * w
 
     for p in profiles.values():
         m = max(p["messages"],1)
+
         p["norm"] = {k:min(v/m,1.0) for k,v in p["traits"].items()}
-        p["style_norm"] = {k:min(v/m,1.0) for k,v in p["style"].items()}
+        p["style_norm"] = {k:min(v/m,1.0) for k,v in p["styles"].items()}
 
         active = sum(1 for v in p["norm"].values() if v>0.1)
         p["confidence"] = min(1.0, math.log(m+1)/5) * (active/3 if active else 0)
 
-        p["top"] = sorted(p["norm"].items(), key=lambda x:x[1], reverse=True)[:3]
-
         p["archetype"] = "Profile forming"
-        p["archetype_explanation"] = "Still warming up. Data in progress."
+        p["archetype_explanation"] = "Insufficient data for classification."
         for name,exp,rule in ARCHETYPES:
             if rule(p["norm"]):
                 p["archetype"] = name
@@ -195,7 +198,7 @@ def build_profiles():
     return profiles
 
 # =================================================
-# FORMAT FOR SL
+# SECOND LIFE FORMAT
 # =================================================
 
 def format_profile(p):
@@ -203,7 +206,8 @@ def format_profile(p):
         f"🧠 {p['name']}",
         f"Confidence {int(p['confidence']*100)}%"
     ]
-    for t,v in p["top"]:
+
+    for t,v in sorted(p["norm"].items(), key=lambda x:x[1], reverse=True)[:3]:
         lines.append(f"• {t} ({int(v*100)}%)")
 
     lines.append(f"🧩 {p['archetype']}")
@@ -211,8 +215,7 @@ def format_profile(p):
 
     styles = [
         f"• {k} ({int(v*100)}%) — {STYLE_EXPLANATIONS[k]}"
-        for k,v in p["style_norm"].items()
-        if v > 0.05
+        for k,v in p["style_norm"].items() if v>0.05
     ]
     if styles:
         lines.append("")
@@ -227,7 +230,7 @@ def format_profile(p):
 
 @app.route("/list_profiles")
 def list_profiles():
-    ranked = sorted(build_profiles().values(), key=lambda x:x["messages"], reverse=True)
+    ranked = sorted(build_profiles().values(), key=lambda p:p["messages"], reverse=True)
     out = ["📊 Social Profiles:"]
     for p in ranked[:5]:
         out.extend(["", format_profile(p)])
@@ -236,27 +239,19 @@ def list_profiles():
 @app.route("/leaderboard")
 def leaderboard():
     profiles = build_profiles()
-
-    ranked = sorted(
-        profiles.values(),
-        key=lambda p: p.get("reputation",{}).get("score",0),
-        reverse=True
-    )
-
     out = []
-    for i,p in enumerate(ranked,1):
+
+    for i,p in enumerate(sorted(profiles.values(), key=lambda p:p["confidence"], reverse=True),1):
         out.append({
             "rank": i,
             "name": p["name"],
             "confidence": int(p["confidence"]*100),
-            "reputation": int(p["reputation"]["score"]*100),
-            "gravity": int(p["gravity_norm"]*100),
-            "role": p["role"],
             "archetype": p["archetype"],
-
+            "archetype_explanation": p["archetype_explanation"],
             "traits": {k:int(v*100) for k,v in p["norm"].items()},
             "styles": {k:int(v*100) for k,v in p["style_norm"].items()},
-            "troll": bool(p["troll_flag"])
+            "trait_explanations": TRAIT_EXPLANATIONS,
+            "style_explanations": STYLE_EXPLANATIONS
         })
 
     return Response(
@@ -268,7 +263,3 @@ def leaderboard():
 @app.route("/")
 def ok():
     return "OK"
-
-
-
-
