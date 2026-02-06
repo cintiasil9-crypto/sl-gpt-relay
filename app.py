@@ -236,18 +236,44 @@ def list_profiles():
 @app.route("/leaderboard")
 def leaderboard():
     profiles = build_profiles()
+
     out = []
     for p in profiles.values():
-        out.append({
+        row = {
             "name": p["name"],
-            "confidence": int(p["confidence"]*100),
-            "traits": {k:int(v*100) for k,v in p["norm"].items()},
-            "styles": {k:int(v*100) for k,v in p["style_norm"].items()},
+            "confidence": int(p["confidence"] * 100),
+
+            # keep placeholders if you don’t use them yet
+            "reputation": int(p.get("reputation", 0) * 100) if isinstance(p.get("reputation"), float) else 0,
+            "gravity": 0,
+            "role": "Performer" if p["norm"].get("engaging",0) > p["norm"].get("concise",0) else "Audience",
             "archetype": p["archetype"],
-            "archetype_explanation": p["archetype_explanation"]
-        })
-    return jsonify(out)
+
+            # TRAITS (FLAT)
+            "engaging":   int(p["norm"].get("engaging",0) * 100),
+            "curious":    int(p["norm"].get("curious",0) * 100),
+            "humorous":   int(p["norm"].get("humorous",0) * 100),
+            "supportive": int(p["norm"].get("supportive",0) * 100),
+            "dominant":   int(p["norm"].get("dominant",0) * 100),
+            "combative":  int(p["norm"].get("combative",0) * 100),
+
+            # STYLES (FLAT)
+            "flirty": int(p["style_norm"].get("flirty",0) * 100),
+            "sexual": int(p["style_norm"].get("sexual",0) * 100),
+            "curse":  int(p["style_norm"].get("curse",0) * 100),
+
+            "troll": False
+        }
+
+        out.append(row)
+
+    return Response(
+        json.dumps(out),
+        mimetype="application/json",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
 @app.route("/")
 def ok():
     return "OK"
+
