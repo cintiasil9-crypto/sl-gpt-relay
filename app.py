@@ -7,257 +7,221 @@ from collections import defaultdict
 # =================================================
 
 app = Flask(__name__)
-GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
+GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
 
-CACHE = {"profiles": {}, "ts": 0}
+CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
 
-NOW_WINDOW = 45 * 60  # 45 minutes for "Vibe Right Now"
+NOW = time.time()
 
 # =================================================
-# KEYWORDS – SL CULTURE TUNED
+# WEIGHTS (REALISTIC + SL-TUNED)
 # =================================================
 
-ENGAGING_WORDS  = {"hi","hey","hello","yo","sup","wb","welcome"}
-CURIOUS_WORDS   = {"why","how","what","where","when","who"}
-HUMOR_WORDS     = {"lol","lmao","haha","rofl","😂","🤣"}
-SUPPORT_WORDS   = {"sorry","hope","hugs","hug","better","there","ok","its ok"}
-DOMINANT_WORDS  = {"listen","look","stop","now","enough","sit","pay attention"}
-COMBATIVE_WORDS = {"idiot","stupid","shut","wrong","wtf","trash","dumb"}
+TRAIT_WEIGHTS = {
+    "engaging":   1.0,
+    "curious":    0.9,
+    "humorous":   1.3,
+    "supportive": 1.2,
+    "dominant":   1.1,
+    "combative":  1.6,
+}
 
-FLIRTY_WORDS = {"cute","hot","handsome","beautiful","kiss","kisses","xoxo","sexy"}
-SEXUAL_WORDS = {"sex","fuck","fucking","horny","wet","hard","naked"}
-CURSE_WORDS  = {"fuck","shit","damn","bitch","asshole","wtf"}
+STYLE_WEIGHTS = {
+    "flirty": 1.1,
+    "sexual": 1.3,
+    "curse":  1.0
+}
 
-NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
+# =================================================
+# KEYWORDS (SL CULTURE)
+# =================================================
+
+ENGAGING = {"hi","hey","yo","sup","wb","welcome"}
+CURIOUS = {"why","how","what","where","when","who"}
+HUMOR = {"lol","lmao","haha","rofl","😂","🤣"}
+SUPPORT = {"sorry","hope","ok","there","np","hug","hugs"}
+DOMINANT = {"listen","look","stop","wait","now"}
+COMBATIVE = {"idiot","stupid","shut","wtf","dumb"}
+
+FLIRTY = {"cute","hot","handsome","beautiful","kiss","xoxo"}
+SEXUAL = {"sex","fuck","horny","wet","hard","naked"}
+CURSE = {"fuck","shit","damn","bitch","asshole"}
+
+NEGATORS = {"not","no","never","dont","can't","isn't"}
 
 # =================================================
 # HELPERS
 # =================================================
 
-def extract_keyword_hits(text):
+def decay(ts):
+    age = (NOW - ts) / 3600
+    if age <= 1: return 1.0
+    if age <= 24: return 0.7
+    return 0.4
+
+def extract_hits(text):
     hits = defaultdict(int)
     if not text:
         return hits
 
-    words = re.findall(r"\b\w+\b|[.!?]", text.lower())
+    words = re.findall(r"\b\w+\b", text.lower())
 
-    def negated(i):
-        for j in range(max(0, i-4), i):
-            if words[j] in {".","!","?"}:
-                break
-            if words[j] in NEGATORS:
-                return True
-        return False
+    def neg(i):
+        return any(w in NEGATORS for w in words[max(0,i-3):i])
 
-    for i, w in enumerate(words):
-        if negated(i):
-            continue
-
-        if w in ENGAGING_WORDS:  hits["engaging"] += 1
-        if w in CURIOUS_WORDS:   hits["curious"] += 1
-        if w in HUMOR_WORDS:     hits["humorous"] += 1
-        if w in SUPPORT_WORDS:   hits["supportive"] += 1
-        if w in DOMINANT_WORDS:  hits["dominant"] += 1
-        if w in COMBATIVE_WORDS: hits["combative"] += 1
-        if w in FLIRTY_WORDS:    hits["flirty"] += 1
-        if w in SEXUAL_WORDS:    hits["sexual"] += 1
-        if w in CURSE_WORDS:     hits["curse"] += 1
-
+    for i,w in enumerate(words):
+        if neg(i): continue
+        if w in ENGAGING: hits["engaging"] += 1
+        if w in CURIOUS: hits["curious"] += 1
+        if w in HUMOR: hits["humorous"] += 1
+        if w in SUPPORT: hits["supportive"] += 1
+        if w in DOMINANT: hits["dominant"] += 1
+        if w in COMBATIVE: hits["combative"] += 1
+        if w in FLIRTY: hits["flirty"] += 1
+        if w in SEXUAL: hits["sexual"] += 1
+        if w in CURSE: hits["curse"] += 1
     return hits
 
-def clamp(v, lo=0.0, hi=1.0):
-    return max(lo, min(hi, v))
-
 # =================================================
-# DATA FETCH
+# FETCH DATA
 # =================================================
 
 def fetch_rows():
     r = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
-    match = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
-    payload = json.loads(match.group(1))
+    m = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
+    payload = json.loads(m.group(1))
     cols = [c["label"] for c in payload["table"]["cols"]]
-
-    rows = []
+    rows=[]
     for row in payload["table"]["rows"]:
-        rec = {}
-        for i, cell in enumerate(row["c"]):
-            rec[cols[i] if cols[i] else f"col_{i}"] = cell["v"] if cell else 0
+        rec={}
+        for i,cell in enumerate(row["c"]):
+            rec[cols[i]] = cell["v"] if cell else 0
         rows.append(rec)
     return rows
 
 # =================================================
-# PROFILE BUILDER
+# PERSONALITY TEXT
+# =================================================
+
+def summary(conf, t):
+    if conf < 0.25:
+        return "Barely spoke. Vibes pending."
+    if t["humorous"] > 0.5:
+        return "Here to joke, not to work."
+    if t["supportive"] > 0.45:
+        return "Comfort avatar energy."
+    if t["dominant"] > 0.45:
+        return "Low-key runs the room."
+    if t["engaging"] > 0.45:
+        return "Talks to literally everyone."
+    return "Just existing. Menacingly."
+
+def vibe(conf, t):
+    if conf < 0.25:
+        return "Just Vibing ✨"
+    if t["humorous"] > 0.5:
+        return "Comedy Mode 🎭"
+    if t["supportive"] > 0.45:
+        return "Comfort Mode 🫂"
+    if t["dominant"] > 0.5:
+        return "Main Character Energy 👑"
+    return "Ambient Presence 🌫️"
+
+# =================================================
+# BUILD PROFILES
 # =================================================
 
 def build_profiles():
     if CACHE["profiles"] and time.time() - CACHE["ts"] < CACHE_TTL:
         return CACHE["profiles"]
 
+    profiles={}
     rows = fetch_rows()
-    profiles = {}
-
-    now = time.time()
 
     for r in rows:
-        uuid = r.get("avatar_uuid")
-        if not uuid:
-            continue
+        uid = r.get("avatar_uuid")
+        if not uid: continue
 
-        ts = float(r.get("timestamp", now))
-        recent = now - ts < NOW_WINDOW
+        ts = float(r.get("timestamp",NOW))
+        w = decay(ts)
 
-        p = profiles.setdefault(uuid, {
+        p = profiles.setdefault(uid,{
             "name": r.get("display_name","Unknown"),
             "messages": 0,
-            "traits_raw": defaultdict(float),
-            "style_raw": defaultdict(float),
-            "recent_raw": defaultdict(float),
-            "confidence": 0,
+            "raw_traits": defaultdict(float),
+            "raw_styles": defaultdict(float),
+            "recent": 0
         })
 
         msgs = max(int(r.get("messages",1)),1)
-        p["messages"] += msgs
+        p["messages"] += msgs * w
+        if NOW - ts < 3600:
+            p["recent"] += msgs
 
-        hits = extract_keyword_hits(r.get("context_sample",""))
-
+        hits = extract_hits(r.get("context_sample",""))
         for k,v in hits.items():
-            if k in {"engaging","curious","humorous","supportive","dominant","combative"}:
-                p["traits_raw"][k] += v
-                if recent:
-                    p["recent_raw"][k] += v
-            if k in {"flirty","sexual","curse"}:
-                p["style_raw"][k] += v
+            if k in TRAIT_WEIGHTS:
+                p["raw_traits"][k] += v * TRAIT_WEIGHTS[k] * w
+            if k in STYLE_WEIGHTS:
+                p["raw_styles"][k] += v * STYLE_WEIGHTS[k] * w
 
-    # =================================================
-    # NORMALIZE + DERIVED SIGNALS
-    # =================================================
-
+    out=[]
     for p in profiles.values():
         m = max(p["messages"],1)
+        conf = min(1.0, math.log(m+1)/4)
+        conf_w = max(0.05, conf**1.5)
 
-        traits = {k: clamp(v/(m*2.5)) for k,v in p["traits_raw"].items()}
-        styles = {k: clamp(v/(m*3.0)) for k,v in p["style_raw"].items()}
-        recent = {k: clamp(v/5.0) for k,v in p["recent_raw"].items()}
+        traits={}
+        for k in ["engaging","curious","humorous","supportive","dominant","combative"]:
+            traits[k] = min((p["raw_traits"][k]/m)*conf_w,1.0)
 
-        confidence = clamp(math.log(m+1)/4)
+        styles={}
+        for k in ["flirty","sexual","curse"]:
+            styles[k] = min((p["raw_styles"][k]/(m*0.3))*conf_w,1.0)
 
-        # Reputation (soft, forgiving)
-        reputation = clamp(
-            0.5
-            + traits.get("engaging",0)*0.2
-            + traits.get("supportive",0)*0.2
-            - traits.get("combative",0)*0.25
-        )
+        # 🔥 NEW DERIVED SIGNALS
+        drama = min((traits["combative"]+styles["curse"])*0.8,1.0)
+        safe_flirt = max(0, styles["flirty"] - traits["combative"])
+        comfort = traits["supportive"] * (1-traits["dominant"])
+        club = min((styles["curse"]+styles["sexual"]+traits["dominant"])*0.6,1.0)
+        hangout = min((traits["supportive"]+traits["curious"])*0.6,1.0)
 
-        # Drama / Risk
-        risk = clamp(
-            traits.get("combative",0)*0.5 +
-            traits.get("dominant",0)*0.3
-        )
+        # 🏅 WEEKLY BADGES
+        badges=[]
+        if traits["humorous"]>0.55: badges.append("🎭 Comedy MVP")
+        if traits["supportive"]>0.5: badges.append("🫂 Comfort Avatar")
+        if drama>0.6: badges.append("🔥 Drama Magnet")
+        if safe_flirt>0.4: badges.append("💖 Safe to Flirt")
+        if conf>0.8: badges.append("👑 Social Regular")
 
-        # Safe to flirt
-        safe_flirt = clamp(
-            styles.get("flirty",0)*0.5 +
-            traits.get("supportive",0)*0.3 -
-            traits.get("combative",0)*0.4
-        )
-
-        # Comfort
-        comfort = clamp(
-            traits.get("supportive",0)*0.6 -
-            traits.get("dominant",0)*0.2
-        )
-
-        # Club vs Hangout
-        club = clamp(
-            traits.get("dominant",0) +
-            traits.get("humorous",0)
-        )
-        hangout = clamp(
-            traits.get("curious",0) +
-            traits.get("supportive",0)
-        )
-
-        # Vibe right now
-        if confidence < 0.15:
-            vibe = "Vibes loading… ⏳"
-        elif recent.get("humorous",0) > 0.4:
-            vibe = "Joke Mode 🤡"
-        elif recent.get("flirty",0) > 0.3:
-            vibe = "Flirty Energy 💋"
-        elif recent.get("combative",0) > 0.3:
-            vibe = "Spicy 😬"
-        elif recent.get("supportive",0) > 0.3:
-            vibe = "Comfort Mode 🫂"
-        else:
-            vibe = "Just Vibing ✨"
-
-        # Funny summary
-        if confidence < 0.2:
-            summary = "Barely spoke. Vibes pending."
-        elif traits.get("humorous",0) > 0.4:
-            summary = "Here to joke, not to work."
-        elif traits.get("supportive",0) > 0.4:
-            summary = "Low drama, high emotional bandwidth."
-        elif traits.get("combative",0) > 0.4:
-            summary = "Will argue with a chair."
-        elif traits.get("curious",0) > 0.4:
-            summary = "Asks questions like an NPC with sentience."
-        else:
-            summary = "Just existing. Menacingly."
-
-        p.update({
+        out.append({
+            "name": p["name"],
+            "confidence": int(conf*100),
+            "vibe": vibe(conf,traits),
+            "summary": summary(conf,traits),
             "traits": {k:int(v*100) for k,v in traits.items()},
             "styles": {k:int(v*100) for k,v in styles.items()},
-            "confidence": int(confidence*100),
-            "reputation": int(reputation*100),
-            "risk": int(risk*100),
-            "safe_flirt": int(safe_flirt*100),
-            "comfort": int(comfort*100),
-            "club_energy": int(club*100),
-            "hangout_energy": int(hangout*100),
-            "vibe": vibe,
-            "summary": summary,
+            "risk": int(drama*100),
+            "club": int(club*100),
+            "hangout": int(hangout*100),
+            "live": "Active 🔥" if p["recent"]>3 else "Chilling 💤",
+            "badges": badges
         })
 
-    CACHE["profiles"] = profiles
+    CACHE["profiles"] = out
     CACHE["ts"] = time.time()
-    return profiles
+    return out
 
 # =================================================
-# API
+# ENDPOINT
 # =================================================
 
 @app.route("/leaderboard")
 def leaderboard():
-    profiles = build_profiles()
-    ranked = sorted(profiles.values(), key=lambda p: p["reputation"], reverse=True)
-
-    out = []
-    for i,p in enumerate(ranked,1):
-        out.append({
-            "rank": i,
-            "name": p["name"],
-            "confidence": p["confidence"],
-            "reputation": p["reputation"],
-            "summary": p["summary"],
-            "vibe": p["vibe"],
-            "traits": p["traits"],
-            "styles": p["styles"],
-            "risk": p["risk"],
-            "safe_flirt": p["safe_flirt"],
-            "comfort": p["comfort"],
-            "club_energy": p["club_energy"],
-            "hangout_energy": p["hangout_energy"],
-        })
-
-    return Response(
-        json.dumps(out),
-        mimetype="application/json",
-        headers={"Access-Control-Allow-Origin":"*"}
-    )
+    data = build_profiles()
+    return Response(json.dumps(data), mimetype="application/json",
+        headers={"Access-Control-Allow-Origin":"*"})
 
 @app.route("/")
 def ok():
