@@ -37,7 +37,7 @@ STYLE_WEIGHTS = {
 # =================================================
 
 ENGAGING = {"hi","hey","yo","sup","wb","welcome"}
-CURIOUS = {"why","how","what","where","when","who","?"}
+CURIOUS = {"why","how","what","where","when","who"}
 HUMOR = {"lol","lmao","haha","rofl","😂","🤣"}
 SUPPORT = {"sorry","hope","ok","there","np","hug","hugs","here"}
 DOMINANT = {"listen","look","stop","wait","now"}
@@ -48,6 +48,58 @@ SEXUAL = {"sex","fuck","horny","wet","hard","naked"}
 CURSE = {"fuck","shit","damn","bitch","asshole"}
 
 NEGATORS = {"not","no","never","dont","can't","isn't"}
+
+# =================================================
+# SUMMARY PHRASES
+# =================================================
+
+PRIMARY_PHRASE = {
+    "engaging": "Naturally pulls people into conversation",
+    "curious": "Actively curious about who’s around",
+    "humorous": "Shows up to entertain",
+    "supportive": "Creates emotional safety",
+    "dominant": "Carries main-character energy",
+    "combative": "Thrives on strong opinions",
+}
+
+SECONDARY_PHRASE = {
+    "engaging": "keeps interactions flowing",
+    "curious": "asks thoughtful questions",
+    "humorous": "keeps things playful",
+    "supportive": "softens heavy moments",
+    "dominant": "steers conversations",
+    "combative": "pushes back when challenged",
+}
+
+TERTIARY_PHRASE = {
+    "engaging": "without forcing attention",
+    "curious": "while quietly observing",
+    "humorous": "often with a playful edge",
+    "supportive": "in a grounding way",
+    "dominant": "with subtle authority",
+    "combative": "with occasional friction",
+}
+
+MODIFIER_PHRASE = {
+    ("curious","flirty"): "with light romantic curiosity",
+    ("humorous","flirty"): "through playful flirtation",
+    ("supportive","flirty"): "with warm, gentle flirtation",
+    ("dominant","flirty"): "with confident flirtation",
+
+    ("curious","sexual"): "with adult curiosity",
+    ("supportive","sexual"): "with emotional intimacy and adult undertones",
+    ("dominant","sexual"): "with bold, adult energy",
+    ("humorous","sexual"): "using shock humor",
+
+    ("humorous","curse"): "with crude humor",
+    ("dominant","curse"): "in a forceful, unfiltered way",
+    ("supportive","curse"): "in a familiar, casual tone",
+}
+
+SINGLE_TRAIT_DISCLAIMER = (
+    "This profile reflects a strong signal in one area; "
+    "other aspects of their personality may not yet have enough data to evaluate."
+)
 
 # =================================================
 # HELPERS
@@ -102,84 +154,45 @@ def fetch_rows():
     return rows
 
 # =================================================
-# SUMMARY ENGINE (UPDATED THRESHOLD LOGIC)
+# SUMMARY ENGINE
 # =================================================
 
-PRIMARY_PHRASE = {
-    "curious": "Actively curious about who’s around",
-    "humorous": "Shows up to entertain",
-    "supportive": "Creates emotional safety",
-    "engaging": "Naturally pulls people into conversation",
-    "dominant": "Carries main-character energy",
-    "combative": "Thrives on strong opinions",
-}
-
-SECONDARY_PHRASE = {
-    "curious": "asks thoughtful questions",
-    "humorous": "keeps things playful",
-    "supportive": "softens heavy moments",
-    "engaging": "keeps interactions flowing",
-    "dominant": "steers conversations",
-    "combative": "pushes back when challenged",
-}
-
-TERTIARY_PHRASE = {
-    "curious": "while quietly observing",
-    "humorous": "often with a playful edge",
-    "supportive": "in a grounding way",
-    "engaging": "without forcing attention",
-    "dominant": "with subtle authority",
-    "combative": "with occasional friction",
-}
-
-MODIFIER_PHRASE = {
-    ("curious","flirty"): "with light romantic curiosity",
-    ("humorous","flirty"): "through playful flirtation",
-    ("supportive","flirty"): "with warm, gentle flirtation",
-    ("dominant","flirty"): "with confident flirtation",
-
-    ("curious","sexual"): "with adult curiosity",
-    ("supportive","sexual"): "with emotional intimacy and adult undertones",
-    ("dominant","sexual"): "with bold, adult energy",
-    ("humorous","sexual"): "using shock humor",
-
-    ("humorous","curse"): "with crude humor",
-    ("dominant","curse"): "in a forceful, unfiltered way",
-    ("supportive","curse"): "in a familiar, casual tone",
-}
-
-SUMMARY_THRESHOLD = 0.04   # 4%
+MIN_TRAIT_THRESHOLD = 0.01
 MIN_TRAITS_FOR_SUMMARY = 2
 
 def build_summary(conf, traits, styles):
     if conf < 0.25:
         return "Barely spoke. Vibes pending."
 
-    ranked = sorted(traits.items(), key=lambda x:x[1], reverse=True)
-    top = [k for k,v in ranked if v >= SUMMARY_THRESHOLD][:3]
+    ranked = sorted(traits.items(), key=lambda x: x[1], reverse=True)
+    qualifying = [k for k,v in ranked if v >= MIN_TRAIT_THRESHOLD]
 
-    # 🔑 NEW RULE: require at least 2 traits ≥ 4%
-    if len(top) < MIN_TRAITS_FOR_SUMMARY:
+    if not qualifying:
         return "Present, but patterns are still forming."
 
-    p1 = PRIMARY_PHRASE.get(top[0], "")
-    p2 = SECONDARY_PHRASE.get(top[1], "")
-    p3 = TERTIARY_PHRASE.get(top[2], "") if len(top) > 2 else ""
+    top = qualifying[:3]
+    dominant_only = len(top) == 1
 
-    base = ", ".join(x for x in [p1,p2,p3] if x)
+    parts = [
+        PRIMARY_PHRASE.get(top[0]),
+        SECONDARY_PHRASE.get(top[1]) if len(top) > 1 else None,
+        TERTIARY_PHRASE.get(top[2]) if len(top) > 2 else None
+    ]
 
-    mod = None
+    base = ", ".join(p for p in parts if p) + "."
+
+    # modifier logic (applies only if enough confidence)
+    modifier = ""
     for m in ["sexual","flirty","curse"]:
-        if styles.get(m,0) >= 0.2:
-            mod = m
-            break
+        if styles.get(m,0) >= 0.2 and conf >= 0.35:
+            phrase = MODIFIER_PHRASE.get((top[0], m))
+            if phrase:
+                modifier = phrase + "."
+                break
 
-    if mod and conf >= 0.35:
-        phrase = MODIFIER_PHRASE.get((top[0],mod))
-        if phrase:
-            return f"{base} — {phrase}."
+    disclaimer = SINGLE_TRAIT_DISCLAIMER if dominant_only else ""
 
-    return f"{base}."
+    return " ".join(x for x in [base, modifier, disclaimer] if x)
 
 # =================================================
 # BUILD PROFILES
@@ -190,83 +203,83 @@ def build_profiles():
         return CACHE["profiles"]
 
     rows = fetch_rows()
-    profiles={}
+    profiles = {}
 
     for r in rows:
-        uid=r.get("avatar_uuid")
+        uid = r.get("avatar_uuid")
         if not uid: continue
 
-        ts=float(r.get("timestamp",NOW))
-        w=decay(ts)
+        ts = float(r.get("timestamp", NOW))
+        w = decay(ts)
 
-        p=profiles.setdefault(uid,{
-            "name":r.get("display_name","Unknown"),
-            "messages":0,
-            "raw_traits":defaultdict(float),
-            "raw_styles":defaultdict(float),
-            "recent":0
+        p = profiles.setdefault(uid,{
+            "name": r.get("display_name","Unknown"),
+            "messages": 0,
+            "raw_traits": defaultdict(float),
+            "raw_styles": defaultdict(float),
+            "recent": 0
         })
 
-        msgs=max(int(r.get("messages",1)),1)
-        p["messages"]+=msgs*w
-        if NOW-ts<3600: p["recent"]+=msgs
+        msgs = max(int(r.get("messages",1)),1)
+        p["messages"] += msgs * w
+        if NOW - ts < 3600:
+            p["recent"] += msgs
 
-        hits=extract_hits(r.get("context_sample",""))
+        hits = extract_hits(r.get("context_sample",""))
         for k,v in hits.items():
             if k in TRAIT_WEIGHTS:
-                p["raw_traits"][k]+=v*TRAIT_WEIGHTS[k]*w
+                p["raw_traits"][k] += v * TRAIT_WEIGHTS[k] * w
             if k in STYLE_WEIGHTS:
-                p["raw_styles"][k]+=v*STYLE_WEIGHTS[k]*w
+                p["raw_styles"][k] += v * STYLE_WEIGHTS[k] * w
 
-    out=[]
+    out = []
     for p in profiles.values():
-        m=max(p["messages"],1)
+        m = max(p["messages"],1)
 
-        confidence=min(1.0, math.log(m+1)/4)
-        damp=max(0.05, confidence**1.5)
+        confidence = min(1.0, math.log(m + 1) / 4)
+        damp = max(0.05, confidence ** 1.5)
 
-        traits={}
-        for k in TRAIT_WEIGHTS:
-            traits[k]=min((p["raw_traits"][k]/m)*damp,1.0)
+        traits = {
+            k: min((p["raw_traits"][k] / m) * damp, 1.0)
+            for k in TRAIT_WEIGHTS
+        }
 
-        styles={}
-        for k in STYLE_WEIGHTS:
-            styles[k]=min((p["raw_styles"][k]/(m*0.3))*damp,1.0)
+        styles = {
+            k: min((p["raw_styles"][k] / (m * 0.3)) * damp, 1.0)
+            for k in STYLE_WEIGHTS
+        }
 
-        risk=min((traits["combative"]+styles["curse"])*0.8,1.0)
-        club=min((traits["dominant"]+styles["sexual"]+styles["curse"])*0.6,1.0)
-        hangout=min((traits["supportive"]+traits["curious"])*0.6,1.0)
+        risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
+        club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
+        hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
 
-        summary=build_summary(confidence,traits,styles)
+        summary = build_summary(confidence, traits, styles)
 
-        badges=[]
-        if traits["humorous"]>0.55: badges.append("🎭 Comedy MVP")
-        if traits["supportive"]>0.5: badges.append("🫂 Comfort Avatar")
-        if risk>0.6: badges.append("🔥 Drama Magnet")
-        if styles["flirty"]>0.4 and risk<0.4: badges.append("💖 Safe to Flirt")
+        badges = []
+        if traits["humorous"] > 0.55: badges.append("🎭 Comedy MVP")
+        if traits["supportive"] > 0.5: badges.append("🫂 Comfort Avatar")
+        if risk > 0.6: badges.append("🔥 Drama Magnet")
+        if styles["flirty"] > 0.4 and risk < 0.4: badges.append("💖 Safe to Flirt")
 
         out.append({
-            "name":p["name"],
-            "confidence":int(confidence*100),
-            "vibe":"Active 🔥" if p["recent"]>3 else "Just Vibing ✨",
-            "summary":summary,
-
-            "traits":{k:int(v*100) for k,v in traits.items()},
-            "styles":{k:int(v*100) for k,v in styles.items()},
-
-            "risk":int(risk*100),
-            "club_energy":int(club*100),
-            "hangout_energy":int(hangout*100),
-
-            "badges":badges
+            "name": p["name"],
+            "confidence": int(confidence * 100),
+            "vibe": "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨",
+            "summary": summary,
+            "traits": {k:int(v*100) for k,v in traits.items()},
+            "styles": {k:int(v*100) for k,v in styles.items()},
+            "risk": int(risk*100),
+            "club_energy": int(club*100),
+            "hangout_energy": int(hangout*100),
+            "badges": badges
         })
 
-    CACHE["profiles"]=out
-    CACHE["ts"]=time.time()
+    CACHE["profiles"] = out
+    CACHE["ts"] = time.time()
     return out
 
 # =================================================
-# ENDPOINT
+# ENDPOINTS
 # =================================================
 
 @app.route("/leaderboard")
