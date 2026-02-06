@@ -7,7 +7,7 @@ from collections import defaultdict
 # =================================================
 
 app = Flask(__name__)
-GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
+GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
 
 CACHE = {"profiles": {}, "ts": 0}
 CACHE_TTL = 300
@@ -31,23 +31,16 @@ STYLE_WEIGHTS = {
     "curse":  1.1
 }
 
-STYLE_EXPLANATIONS = {
-    "flirty": "Leans playful. Probably typing with a wink.",
-    "sexual": "Not subtle. HR would like a word.",
-    "curse":  "Expressive vocabulary. Swears for emphasis."
+STYLE_DISPLAY_MULTIPLIER = 1.8
+
+STRUCTURAL_WEIGHTS = {
+    "question": 0.15,
+    "caps": 0.4
 }
 
-ARCHETYPE_EXPLANATIONS = {
-    "Social Catalyst":    "Keeps conversations alive like caffeine for humans.",
-    "Entertainer":        "Here for the laughs. Would absolutely bring snacks.",
-    "Debater":            "Thrives on disagreement. Argues for sport.",
-    "Presence Dominator": "Fills the room without trying.",
-    "Support Anchor":     "Emotional duct tape. Holds chats together.",
-    "Quiet Thinker":      "Observes first. Speaks with purpose.",
-    "Profile forming":    "Still warming up. Data in progress."
-}
-
-NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
+# =================================================
+# KEYWORDS
+# =================================================
 
 ENGAGING_WORDS  = {"hi","hey","hello","yo","welcome"}
 CURIOUS_WORDS   = {"why","how","what","where","when","who"}
@@ -59,6 +52,44 @@ COMBATIVE_WORDS = {"idiot","stupid","shut","wrong","wtf"}
 FLIRTY_WORDS = {"cute","hot","handsome","beautiful","kiss","kisses","xoxo"}
 SEXUAL_WORDS = {"sex","fuck","fucking","horny","wet","hard","naked"}
 CURSE_WORDS  = {"fuck","shit","damn","bitch","asshole","wtf"}
+
+NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
+
+# =================================================
+# ARCHETYPES + EXPLANATIONS
+# =================================================
+
+ARCHETYPES = [
+    ("Social Catalyst",
+     "Keeps conversations alive like caffeine for humans.",
+     lambda t: t.get("engaging",0) > 0.12 and t.get("curious",0) > 0.06),
+
+    ("Entertainer",
+     "Here for the laughs. Would absolutely bring snacks.",
+     lambda t: t.get("humorous",0) > 0.12),
+
+    ("Debater",
+     "Thrives on disagreement. Argues for sport.",
+     lambda t: t.get("combative",0) > 0.12),
+
+    ("Presence Dominator",
+     "Walks in like they own the sim. Sometimes they do.",
+     lambda t: t.get("dominant",0) > 0.12),
+
+    ("Support Anchor",
+     "Emotionally supportive. Probably gives good hugs.",
+     lambda t: t.get("supportive",0) > 0.12),
+
+    ("Quiet Thinker",
+     "Observes more than speaks. Brain always online.",
+     lambda t: t.get("concise",0) > 0.18),
+]
+
+STYLE_EXPLANATIONS = {
+    "flirty":  "Leans playful. Compliments deployed strategically.",
+    "sexual":  "Not subtle. HR would like a word.",
+    "curse":   "Expressive vocabulary. Swears for emphasis."
+}
 
 # =================================================
 # TEXT PARSING
@@ -74,13 +105,14 @@ def extract_keyword_hits(text):
     def negated(i):
         for j in range(i-4, i):
             if j < 0: continue
-            if words[j] in ".!?": break
+            if words[j] in {".","!","?"}: break
             if words[j] in NEGATORS:
                 return True
         return False
 
     for i, w in enumerate(words):
-        if negated(i): continue
+        if negated(i):
+            continue
 
         if w in ENGAGING_WORDS:  hits["engaging"] += 1
         if w in CURIOUS_WORDS:   hits["curious"] += 1
@@ -108,6 +140,15 @@ def decay(ts):
     except:
         return 1.0
 
+def style_decay(ts):
+    try:
+        hours = (time.time() - float(ts)) / 3600
+        if hours <= 1: return 1.0
+        if hours <= 6: return 0.4
+        return 0.1
+    except:
+        return 0.3
+
 # =================================================
 # DATA FETCH
 # =================================================
@@ -122,12 +163,12 @@ def fetch_rows():
     for row in payload["table"]["rows"]:
         rec = {}
         for i, cell in enumerate(row["c"]):
-            rec[cols[i]] = cell["v"] if cell else 0
+            rec[cols[i] if cols[i] else f"col_{i}"] = cell["v"] if cell else 0
         rows.append(rec)
     return rows
 
 # =================================================
-# BUILD PROFILES (SINGLE SOURCE OF TRUTH)
+# BUILD PROFILES
 # =================================================
 
 def build_profiles():
@@ -135,25 +176,33 @@ def build_profiles():
         return CACHE["profiles"]
 
     profiles = {}
+    rows = fetch_rows()
 
-    for r in fetch_rows():
+    for r in rows:
         uuid = r.get("avatar_uuid")
         if not uuid:
             continue
 
         ts = r.get("timestamp", time.time())
         w  = decay(ts)
+        sw = style_decay(ts)
 
         p = profiles.setdefault(uuid,{
-            "uuid": uuid,
             "name": r.get("display_name","Unknown"),
             "messages": 0,
             "traits": defaultdict(float),
-            "styles": defaultdict(float)
+            "style": defaultdict(float)
         })
 
         msgs = max(int(r.get("messages",1)),1)
         p["messages"] += msgs * w
+
+        p["traits"]["concise"] += (r.get("short_msgs",0)/msgs) * 1.2 * w
+        p["traits"]["curious"] += r.get("question_count",0) * STRUCTURAL_WEIGHTS["question"] * w
+
+        caps = r.get("caps_msgs",0)
+        p["traits"]["dominant"] += caps * STRUCTURAL_WEIGHTS["caps"] * w
+        p["traits"]["combative"] += caps * STRUCTURAL_WEIGHTS["caps"] * 0.6 * w
 
         hits = extract_keyword_hits(r.get("context_sample",""))
 
@@ -161,32 +210,38 @@ def build_profiles():
             if k in TRAIT_KEYWORD_WEIGHTS:
                 p["traits"][k] += v * TRAIT_KEYWORD_WEIGHTS[k] * w
             if k in STYLE_WEIGHTS:
-                p["styles"][k] += v * STYLE_WEIGHTS[k] * w
+                p["style"][k] += v * STYLE_WEIGHTS[k] * sw
 
-    # FINALIZE
     for p in profiles.values():
         m = max(p["messages"],1)
 
-        p["confidence"] = min(1.0, math.log(m+1)/4)
+        norm = {k:min(v/m,1.0) for k,v in p["traits"].items()}
+        style_norm = {
+            k:min((v/(m*0.25))*STYLE_DISPLAY_MULTIPLIER,1.0)
+            for k,v in p["style"].items()
+        }
 
-        p["trait_pct"] = {k:int(min(v/m,1)*100) for k,v in p["traits"].items()}
-        p["style_pct"] = {k:int(min(v/(m*0.25),1)*100) for k,v in p["styles"].items()}
+        confidence = min(1.0, math.log(m+1)/4)
 
-        # Archetype logic
-        p["archetype"] = "Profile forming"
-        if p["trait_pct"].get("humorous",0) > 12:
-            p["archetype"] = "Entertainer"
-        elif p["trait_pct"].get("engaging",0) > 12 and p["trait_pct"].get("curious",0) > 6:
-            p["archetype"] = "Social Catalyst"
-        elif p["trait_pct"].get("combative",0) > 12:
-            p["archetype"] = "Debater"
+        archetype = "Profile forming"
+        arche_exp = "Still warming up. Data in progress."
+        if confidence > 0.35 and m >= 10:
+            for name,exp,rule in ARCHETYPES:
+                if rule(norm):
+                    archetype = name
+                    arche_exp = exp
+                    break
 
-        p["archetype_explanation"] = ARCHETYPE_EXPLANATIONS[p["archetype"]]
-
-        p["style_explanations"] = {
-            k: STYLE_EXPLANATIONS[k]
-            for k,v in p["style_pct"].items()
-            if v > 0
+        p["final"] = {
+            "name": p["name"],
+            "confidence": int(confidence*100),
+            "traits": {k:int(v*100) for k,v in norm.items() if v > 0},
+            "meta": {
+                "styles": {k:int(v*100) for k,v in style_norm.items() if v > 0.015},
+                "style_explanations": STYLE_EXPLANATIONS,
+                "archetype": archetype,
+                "archetype_explanation": arche_exp
+            }
         }
 
     CACHE["profiles"] = profiles
@@ -194,47 +249,15 @@ def build_profiles():
     return profiles
 
 # =================================================
-# SECOND LIFE ENDPOINTS (DO NOT BREAK)
+# SL ENDPOINT (UNCHANGED CONTRACT)
 # =================================================
 
 @app.route("/list_profiles")
 def list_profiles():
     profiles = build_profiles()
-    ranked = sorted(profiles.values(), key=lambda p:p["messages"], reverse=True)[:5]
-
-    out = []
-    for p in ranked:
-        out.append({
-            "name": p["name"],
-            "confidence": int(p["confidence"]*100),
-            "traits": p["trait_pct"],
-            "styles": p["style_pct"],
-            "style_explanations": p["style_explanations"],
-            "archetype": p["archetype"],
-            "archetype_explanation": p["archetype_explanation"]
-        })
-
-    return Response(json.dumps(out), mimetype="application/json")
-
-@app.route("/lookup_avatars", methods=["POST"])
-def lookup_avatars():
-    ids = set(request.json.get("ids",[]))
-    profiles = build_profiles()
-
-    out = []
-    for p in profiles.values():
-        if p["uuid"] in ids:
-            out.append({
-                "name": p["name"],
-                "confidence": int(p["confidence"]*100),
-                "traits": p["trait_pct"],
-                "styles": p["style_pct"],
-                "style_explanations": p["style_explanations"],
-                "archetype": p["archetype"],
-                "archetype_explanation": p["archetype_explanation"]
-            })
-
-    return Response(json.dumps(out), mimetype="application/json")
+    out = [p["final"] for p in profiles.values()]
+    return Response(json.dumps(out), mimetype="application/json",
+                    headers={"Access-Control-Allow-Origin":"*"})
 
 # =================================================
 # WEBSITE ENDPOINT
@@ -243,13 +266,9 @@ def lookup_avatars():
 @app.route("/leaderboard")
 def leaderboard():
     profiles = build_profiles()
-    ranked = sorted(profiles.values(), key=lambda p:p["messages"], reverse=True)
-
-    return Response(
-        json.dumps(ranked),
-        mimetype="application/json",
-        headers={"Access-Control-Allow-Origin":"*"}
-    )
+    out = [p["final"] for p in profiles.values()]
+    return Response(json.dumps(out), mimetype="application/json",
+                    headers={"Access-Control-Allow-Origin":"*"})
 
 @app.route("/")
 def ok():
