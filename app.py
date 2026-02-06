@@ -236,31 +236,42 @@ def list_profiles():
 @app.route("/leaderboard")
 def leaderboard():
     profiles = build_profiles()
-
     out = []
+
     for p in profiles.values():
+        m = max(p.get("messages", 1), 1)
+
+        # normalize traits safely
+        norm_traits = {
+            k: min(v / m, 1.0)
+            for k, v in p.get("traits", {}).items()
+        }
+
+        norm_styles = {
+            k: min(v / m, 1.0)
+            for k, v in p.get("style", {}).items()
+        }
+
         row = {
             "name": p["name"],
-            "confidence": int(p["confidence"] * 100),
-
-            # keep placeholders if you don’t use them yet
-            "reputation": int(p.get("reputation", 0) * 100) if isinstance(p.get("reputation"), float) else 0,
+            "confidence": int(p.get("confidence", 0) * 100),
+            "reputation": 0,
             "gravity": 0,
-            "role": "Performer" if p["norm"].get("engaging",0) > p["norm"].get("concise",0) else "Audience",
-            "archetype": p["archetype"],
+            "role": "Performer" if norm_traits.get("engaging", 0) > norm_traits.get("concise", 0) else "Audience",
+            "archetype": p.get("archetype", "Profile forming"),
 
-            # TRAITS (FLAT)
-            "engaging":   int(p["norm"].get("engaging",0) * 100),
-            "curious":    int(p["norm"].get("curious",0) * 100),
-            "humorous":   int(p["norm"].get("humorous",0) * 100),
-            "supportive": int(p["norm"].get("supportive",0) * 100),
-            "dominant":   int(p["norm"].get("dominant",0) * 100),
-            "combative":  int(p["norm"].get("combative",0) * 100),
+            # traits
+            "engaging":   int(norm_traits.get("engaging", 0) * 100),
+            "curious":    int(norm_traits.get("curious", 0) * 100),
+            "humorous":   int(norm_traits.get("humorous", 0) * 100),
+            "supportive": int(norm_traits.get("supportive", 0) * 100),
+            "dominant":   int(norm_traits.get("dominant", 0) * 100),
+            "combative":  int(norm_traits.get("combative", 0) * 100),
 
-            # STYLES (FLAT)
-            "flirty": int(p["style_norm"].get("flirty",0) * 100),
-            "sexual": int(p["style_norm"].get("sexual",0) * 100),
-            "curse":  int(p["style_norm"].get("curse",0) * 100),
+            # styles
+            "flirty": int(norm_styles.get("flirty", 0) * 100),
+            "sexual": int(norm_styles.get("sexual", 0) * 100),
+            "curse":  int(norm_styles.get("curse", 0) * 100),
 
             "troll": False
         }
@@ -276,4 +287,5 @@ def leaderboard():
 @app.route("/")
 def ok():
     return "OK"
+
 
