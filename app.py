@@ -236,50 +236,46 @@ def list_profiles():
 @app.route("/leaderboard")
 def leaderboard():
     profiles = build_profiles()
-    out = []
+    rows = []
 
     for p in profiles.values():
         m = max(p.get("messages", 1), 1)
 
-        # normalize traits safely
-        norm_traits = {
-            k: min(v / m, 1.0)
-            for k, v in p.get("traits", {}).items()
-        }
+        traits = p.get("traits", {})
+        styles = p.get("style", {})
 
-        norm_styles = {
-            k: min(v / m, 1.0)
-            for k, v in p.get("style", {}).items()
-        }
+        def pct(v):
+            return int(min(v / m, 1.0) * 100)
 
         row = {
             "name": p["name"],
             "confidence": int(p.get("confidence", 0) * 100),
             "reputation": 0,
             "gravity": 0,
-            "role": "Performer" if norm_traits.get("engaging", 0) > norm_traits.get("concise", 0) else "Audience",
+            "role": "Performer" if traits.get("engaging", 0) > traits.get("concise", 0) else "Audience",
             "archetype": p.get("archetype", "Profile forming"),
 
-            # traits
-            "engaging":   int(norm_traits.get("engaging", 0) * 100),
-            "curious":    int(norm_traits.get("curious", 0) * 100),
-            "humorous":   int(norm_traits.get("humorous", 0) * 100),
-            "supportive": int(norm_traits.get("supportive", 0) * 100),
-            "dominant":   int(norm_traits.get("dominant", 0) * 100),
-            "combative":  int(norm_traits.get("combative", 0) * 100),
+            # TRAITS (FLAT — THIS IS THE KEY)
+            "engaging":   pct(traits.get("engaging", 0)),
+            "curious":    pct(traits.get("curious", 0)),
+            "humorous":   pct(traits.get("humorous", 0)),
+            "supportive": pct(traits.get("supportive", 0)),
+            "dominant":   pct(traits.get("dominant", 0)),
+            "combative":  pct(traits.get("combative", 0)),
 
-            # styles
-            "flirty": int(norm_styles.get("flirty", 0) * 100),
-            "sexual": int(norm_styles.get("sexual", 0) * 100),
-            "curse":  int(norm_styles.get("curse", 0) * 100),
+            # STYLE MODIFIERS (FLAT)
+            "flirty": pct(styles.get("flirty", 0)),
+            "sexual": pct(styles.get("sexual", 0)),
+            "curse":  pct(styles.get("curse", 0)),
 
+            # FLAGS
             "troll": False
         }
 
-        out.append(row)
+        rows.append(row)
 
     return Response(
-        json.dumps(out),
+        json.dumps(rows),
         mimetype="application/json",
         headers={"Access-Control-Allow-Origin": "*"}
     )
@@ -287,5 +283,6 @@ def leaderboard():
 @app.route("/")
 def ok():
     return "OK"
+
 
 
