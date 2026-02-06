@@ -102,7 +102,7 @@ def fetch_rows():
     return rows
 
 # =================================================
-# SUMMARY ENGINE (UNCHANGED — PRESERVED)
+# SUMMARY ENGINE (UPDATED THRESHOLD LOGIC)
 # =================================================
 
 PRIMARY_PHRASE = {
@@ -148,19 +148,23 @@ MODIFIER_PHRASE = {
     ("supportive","curse"): "in a familiar, casual tone",
 }
 
+SUMMARY_THRESHOLD = 0.04   # 4%
+MIN_TRAITS_FOR_SUMMARY = 2
+
 def build_summary(conf, traits, styles):
     if conf < 0.25:
         return "Barely spoke. Vibes pending."
 
     ranked = sorted(traits.items(), key=lambda x:x[1], reverse=True)
-    top = [k for k,v in ranked if v > 0.12][:3]
+    top = [k for k,v in ranked if v >= SUMMARY_THRESHOLD][:3]
 
-    if not top:
+    # 🔑 NEW RULE: require at least 2 traits ≥ 4%
+    if len(top) < MIN_TRAITS_FOR_SUMMARY:
         return "Present, but patterns are still forming."
 
     p1 = PRIMARY_PHRASE.get(top[0], "")
-    p2 = SECONDARY_PHRASE.get(top[1], "") if len(top)>1 else ""
-    p3 = TERTIARY_PHRASE.get(top[2], "") if len(top)>2 else ""
+    p2 = SECONDARY_PHRASE.get(top[1], "")
+    p3 = TERTIARY_PHRASE.get(top[2], "") if len(top) > 2 else ""
 
     base = ", ".join(x for x in [p1,p2,p3] if x)
 
@@ -218,23 +222,17 @@ def build_profiles():
     for p in profiles.values():
         m=max(p["messages"],1)
 
-        # confidence = data maturity ONLY
         confidence=min(1.0, math.log(m+1)/4)
-
-        # damp expressiveness by maturity
         damp=max(0.05, confidence**1.5)
 
         traits={}
         for k in TRAIT_WEIGHTS:
-            raw=(p["raw_traits"][k]/m)*damp
-            traits[k]=min(raw,1.0)
+            traits[k]=min((p["raw_traits"][k]/m)*damp,1.0)
 
         styles={}
         for k in STYLE_WEIGHTS:
-            raw=(p["raw_styles"][k]/(m*0.3))*damp
-            styles[k]=min(raw,1.0)
+            styles[k]=min((p["raw_styles"][k]/(m*0.3))*damp,1.0)
 
-        # derived signals
         risk=min((traits["combative"]+styles["curse"])*0.8,1.0)
         club=min((traits["dominant"]+styles["sexual"]+styles["curse"])*0.6,1.0)
         hangout=min((traits["supportive"]+traits["curious"])*0.6,1.0)
