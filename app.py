@@ -9,32 +9,34 @@ from collections import defaultdict
 app = Flask(__name__)
 GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
 
-CACHE = {"profiles": {}, "ts": 0}
-CACHE_TTL = 300  # 5 minutes
+CACHE = {"profiles": None, "ts": 0}
+CACHE_TTL = 300
 
 # =================================================
-# WEIGHTS (BEHAVIORAL, NOT DISPLAY)
+# WEIGHTS (tuned, but safe)
 # =================================================
 
 TRAIT_KEYWORD_WEIGHTS = {
-    "engaging":   1.4,
-    "curious":    1.3,
-    "humorous":   1.4,
-    "supportive": 1.4,
-    "dominant":   1.5,
-    "combative":  1.4,
+    "engaging":   1.0,
+    "curious":    0.9,
+    "humorous":   1.0,
+    "supportive": 1.0,
+    "dominant":   1.1,
+    "combative":  1.0,
 }
 
 STYLE_WEIGHTS = {
-    "flirty": 1.1,
-    "sexual": 1.2,
+    "flirty": 1.0,
+    "sexual": 1.0,
     "curse":  1.0
 }
 
 STRUCTURAL_WEIGHTS = {
-    "question": 0.15,
-    "caps": 0.35
+    "question": 0.6,
+    "caps": 0.8
 }
+
+STYLE_DISPLAY_MULTIPLIER = 1.0
 
 # =================================================
 # KEYWORDS
@@ -54,38 +56,16 @@ CURSE_WORDS  = {"fuck","shit","damn","bitch","asshole","wtf"}
 NEGATORS = {"not","no","never","dont","don't","isnt","isn't","cant","can't"}
 
 # =================================================
-# ARCHETYPES (RATE-BASED)
+# ARCHETYPES (SAFE)
 # =================================================
 
 ARCHETYPES = [
-    ("Social Catalyst",    lambda t: t["engaging"] > 0.35 and t["curious"] > 0.18),
-    ("Entertainer",        lambda t: t["humorous"] > 0.35),
-    ("Debater",            lambda t: t["combative"] > 0.30),
-    ("Presence Dominator", lambda t: t["dominant"] > 0.35),
-    ("Support Anchor",     lambda t: t["supportive"] > 0.35),
+    ("Social Catalyst",    lambda t: t.get("engaging",0) > 0.25 and t.get("curious",0) > 0.15),
+    ("Entertainer",        lambda t: t.get("humorous",0) > 0.30),
+    ("Support Anchor",     lambda t: t.get("supportive",0) > 0.30),
+    ("Presence Dominator", lambda t: t.get("dominant",0) > 0.30),
+    ("Debater",            lambda t: t.get("combative",0) > 0.30),
 ]
-
-# =================================================
-# DECAY
-# =================================================
-
-def decay(ts):
-    try:
-        days = (time.time() - float(ts)) / 86400
-        if days <= 1: return 1.0
-        if days <= 7: return 0.6
-        return 0.3
-    except:
-        return 1.0
-
-def style_decay(ts):
-    try:
-        hours = (time.time() - float(ts)) / 3600
-        if hours <= 1: return 1.0
-        if hours <= 6: return 0.4
-        return 0.15
-    except:
-        return 0.3
 
 # =================================================
 # TEXT PARSING
@@ -105,7 +85,7 @@ def extract_keyword_hits(text):
             if words[j] in NEGATORS: return True
         return False
 
-    for i, w in enumerate(words):
+    for i,w in enumerate(words):
         if negated(i): continue
 
         if w in ENGAGING_WORDS:  hits["engaging"] += 1
@@ -120,6 +100,19 @@ def extract_keyword_hits(text):
         if w in CURSE_WORDS:  hits["curse"] += 1
 
     return hits
+
+# =================================================
+# DECAY
+# =================================================
+
+def decay(ts):
+    try:
+        days = (time.time() - float(ts)) / 86400
+        if days <= 1: return 1.0
+        if days <= 7: return 0.7
+        return 0.4
+    except:
+        return 1.0
 
 # =================================================
 # DATA FETCH
@@ -140,7 +133,7 @@ def fetch_rows():
     return rows
 
 # =================================================
-# BUILD PROFILES (STABLE + BOUNDED)
+# BUILD PROFILES
 # =================================================
 
 def build_profiles():
@@ -155,92 +148,67 @@ def build_profiles():
         if not uuid:
             continue
 
-        ts = r.get("timestamp", time.time())
-        w  = decay(ts)
-        sw = style_decay(ts)
-
         p = profiles.setdefault(uuid,{
             "name": r.get("display_name","Unknown"),
             "messages": 0,
             "traits": defaultdict(float),
-            "style": defaultdict(float),
+            "styles": defaultdict(float),
             "reputation": 0.5
         })
 
         msgs = max(int(r.get("messages",1)),1)
-        p["messages"] += msgs * w
-
-        # STRUCTURAL (CAPPED)
-        p["traits"]["curious"] += min(r.get("question_count",0), 5) * STRUCTURAL_WEIGHTS["question"] * w
-
-        caps = min(r.get("caps_msgs",0), 5)
-        p["traits"]["dominant"]  += caps * STRUCTURAL_WEIGHTS["caps"] * w
-        p["traits"]["combative"] += caps * STRUCTURAL_WEIGHTS["caps"] * 0.6 * w
+        p["messages"] += msgs
 
         hits = extract_keyword_hits(r.get("context_sample",""))
 
         for k,v in hits.items():
             if k in TRAIT_KEYWORD_WEIGHTS:
-                p["traits"][k] += v * TRAIT_KEYWORD_WEIGHTS[k] * w
+                p["traits"][k] += v * TRAIT_KEYWORD_WEIGHTS[k]
             if k in STYLE_WEIGHTS:
-                p["style"][k] += v * STYLE_WEIGHTS[k] * sw
+                p["styles"][k] += v * STYLE_WEIGHTS[k]
 
-    # FINAL NORMALIZATION
+    # FINAL NORMALIZATION (HARD CAPPED)
     for p in profiles.values():
-        m = max(p["messages"],1)
+        m = max(p["messages"], 1)
 
-        p["norm"] = {
-            k: max(0.0, min(v / m, 1.0))
-            for k,v in p["traits"].items()
-        }
+        norm = {}
+        for k,v in p["traits"].items():
+            norm[k] = min(v / (m * 2.5), 1.0)
 
-        signal = (
-            p["norm"].get("engaging",0)
-          + p["norm"].get("supportive",0)
-          - p["norm"].get("combative",0)*0.6
-        )
+        style_norm = {}
+        for k,v in p["styles"].items():
+            style_norm[k] = min(v / (m * 2.0), 1.0)
 
-        p["reputation"] = p["reputation"]*0.92 + max(0,signal)*0.08
+        signal = norm.get("engaging",0) + norm.get("supportive",0) - norm.get("combative",0)
+        p["reputation"] = min(max(signal,0),1)
 
-        p["confidence"] = min(1.0, math.log(m+1)/4)
+        archetype = "Profile forming"
+        for name,rule in ARCHETYPES:
+            if rule(norm):
+                archetype = name
+                break
 
-        p["archetype"] = "Profile forming"
-        if p["confidence"] > 0.35 and m >= 10:
-            for name,rule in ARCHETYPES:
-                if rule(p["norm"]):
-                    p["archetype"] = name
-                    break
-
-        p["role"] = "Performer" if p["norm"].get("engaging",0) > p["norm"].get("curious",0) else "Audience"
-
-        p["style_norm"] = {
-            k: max(0.0, min(v / m, 1.0))
-            for k,v in p["style"].items()
-        }
-
-        p["troll_flag"] = (
-            p["norm"].get("combative",0) > 0.35 and
-            p["norm"].get("dominant",0) > 0.35 and
-            m > 15
-        )
+        p.update({
+            "norm": norm,
+            "style_norm": style_norm,
+            "archetype": archetype,
+            "confidence": min(math.log(m+1)/4,1.0),
+            "role": "Performer" if norm.get("engaging",0) >= norm.get("supportive",0) else "Audience"
+        })
 
     CACHE["profiles"] = profiles
     CACHE["ts"] = time.time()
     return profiles
 
 # =================================================
-# API
+# ENDPOINT
 # =================================================
 
 @app.route("/leaderboard")
 def leaderboard():
     profiles = build_profiles()
 
-    ranked = sorted(
-        profiles.values(),
-        key=lambda p: p["reputation"],
-        reverse=True
-    )
+    ranked = sorted(profiles.values(), key=lambda p: p["reputation"], reverse=True)
 
     out = []
     for i,p in enumerate(ranked,1):
@@ -249,18 +217,16 @@ def leaderboard():
             "name": p["name"],
             "confidence": int(p["confidence"]*100),
             "reputation": int(p["reputation"]*100),
+            "gravity": 0,
             "role": p["role"],
             "archetype": p["archetype"],
             "traits": {k:int(v*100) for k,v in p["norm"].items()},
             "styles": {k:int(v*100) for k,v in p["style_norm"].items()},
-            "troll": bool(p["troll_flag"])
+            "troll": p["norm"].get("combative",0) > 0.6
         })
 
-    return Response(
-        json.dumps(out),
-        mimetype="application/json",
-        headers={"Access-Control-Allow-Origin":"*"}
-    )
+    return Response(json.dumps(out), mimetype="application/json",
+                    headers={"Access-Control-Allow-Origin":"*"})
 
 @app.route("/")
 def ok():
