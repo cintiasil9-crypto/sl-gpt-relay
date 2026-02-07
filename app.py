@@ -363,6 +363,39 @@ def profiles_available():
         json.dumps(payload, ensure_ascii=False),
         mimetype="application/json; charset=utf-8"
     )
+    
+@app.route("/panel/profile/<uuid>")
+def panel_profile(uuid):
+    for p in build_profiles():
+        if p["avatar_uuid"] == uuid:
+            return f"""
+            <html>
+            <head>
+              <style>
+                body {{
+                  margin: 0;
+                  padding: 14px;
+                  font-family: Arial, sans-serif;
+                  background: #ffffff;
+                  color: #000000;
+                }}
+                h2 {{
+                  margin: 0 0 10px 0;
+                  font-size: 18px;
+                }}
+                pre {{
+                  white-space: pre-wrap;
+                  font-size: 13px;
+                }}
+              </style>
+            </head>
+            <body>
+              <h2>Social Profile</h2>
+              <pre>{p["pretty_text"]}</pre>
+            </body>
+            </html>
+            """
+    return "<html><body>No profile yet.</body></html>"
 
 # =================================================
 # WEBSITE ENDPOINT
