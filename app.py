@@ -316,6 +316,70 @@ def build_profiles():
     return out
 
 # =================================================
+# ROOM VIBE HELPERS (HYBRID: PRESENCE + LIVE CHAT)
+# =================================================
+
+def presence_summary(profiles):
+    if not profiles:
+        return "None detected"
+
+    avg_dom   = sum(p["traits"]["dominant"] for p in profiles) / len(profiles)
+    avg_humor = sum(p["traits"]["humorous"] for p in profiles) / len(profiles)
+    avg_sup   = sum(p["traits"]["supportive"] for p in profiles) / len(profiles)
+    avg_risk  = sum(p["risk"] for p in profiles) / len(profiles)
+
+    tags = []
+    if avg_dom >= 45:   tags.append("Dominant")
+    if avg_humor >= 45: tags.append("Humorous")
+    if avg_sup >= 45:   tags.append("Supportive")
+    if avg_risk >= 45:  tags.append("Mixed Risk")
+
+    return " • ".join(tags) if tags else "Mixed personalities"
+
+
+def live_chat_summary(profiles):
+    total_recent = sum(p.get("recent", 0) for p in profiles)
+
+    if total_recent == 0:
+        return "Quiet"
+    if total_recent < 6:
+        return "Warming Up"
+    if total_recent < 15:
+        return "Active"
+    return "Buzzing"
+
+
+def build_hybrid_room_vibe(profiles):
+    if not profiles:
+        return (
+            "🧠 ROOM VIBE\n"
+            "👥 Presence: None\n"
+            "💬 Live Chat: Quiet\n\n"
+            "🌙 First impression:\n"
+            "Empty or inactive room."
+        )
+
+    presence = presence_summary(profiles)
+    live     = live_chat_summary(profiles)
+
+    if live == "Quiet":
+        impression = "Strong personalities present, but little conversation yet."
+    elif live == "Warming Up":
+        impression = "Early engagement forming. Easy, low-pressure entry."
+    elif live == "Active":
+        impression = "Conversation-ready. Joining now should land well."
+    else:
+        impression = "High momentum. Match the pace or observe first."
+
+    return (
+        "🧠 ROOM VIBE\n"
+        f"👥 Presence: {presence}\n"
+        f"💬 Live Chat: {live}\n\n"
+        "🌙 First impression:\n"
+        f"{impression}"
+    )
+
+# =================================================
 # HUD ENDPOINTS
 # =================================================
 
@@ -364,109 +428,26 @@ def profiles_available():
         mimetype="application/json; charset=utf-8"
     )
 
+# =================================================
+# ROOM VIBE ENDPOINT (HYBRID)
+# =================================================
+
 @app.route("/room/vibe", methods=["POST"])
 def room_vibe():
     data = request.get_json(silent=True) or {}
     uuids = set(data.get("uuids", []))
 
-    # Pull active profiles in range
     profiles = [
         p for p in build_profiles()
-        if p["avatar_uuid"] in uuids and p["confidence"] >= 20
+        if p["avatar_uuid"] in uuids
     ]
 
-    # Low-signal fallback
-    if len(profiles) < 2:
-        return jsonify({
-            "text":
-            "🧠 ROOM VIBE\n"
-            "━━━━━━━━━━━━\n"
-            "Room is quiet.\n"
-            "No strong signals yet."
-        })
+    text = build_hybrid_room_vibe(profiles)
 
-    def avg(key):
-        return sum(p[key] for p in profiles) / len(profiles)
-
-    def avg_nested(section, key):
-        return sum(p[section][key] for p in profiles) / len(profiles)
-
-    avg_conf   = avg("confidence")
-    avg_dom    = avg_nested("traits", "dominant")
-    avg_sup    = avg_nested("traits", "supportive")
-    avg_flirt  = avg_nested("styles", "flirty")
-    avg_risk   = avg("risk")
-
-    # ---------- ENERGY ----------
-    if avg_conf >= 60:
-        energy = "High"
-    elif avg_conf >= 35:
-        energy = "Moderate"
-    else:
-        energy = "Chill"
-
-    # ---------- DOMINANCE ----------
-    if avg_dom >= 50:
-        dominance = "Strong"
-    elif avg_dom >= 30:
-        dominance = "Mixed"
-    else:
-        dominance = "Low"
-
-    # ---------- FLIRT ----------
-    if avg_flirt >= 45:
-        flirt = "High"
-    elif avg_flirt >= 25:
-        flirt = "Medium"
-    else:
-        flirt = "Low"
-
-    # ---------- RISK ----------
-    if avg_risk >= 55:
-        risk = "Volatile"
-    elif avg_risk >= 30:
-        risk = "Mixed"
-    else:
-        risk = "Safe"
-
-    # ---------- BEST APPROACH ----------
-    if risk == "Volatile":
-        approach = [
-            "→ Keep it neutral",
-            "→ Avoid hot takes",
-            "→ Timing matters"
-        ]
-    elif dominance == "Strong" and risk != "Safe":
-        approach = [
-            "→ Observe first",
-            "→ Humor may misfire",
-            "→ Don’t challenge early"
-        ]
-    elif energy == "High" and risk == "Safe":
-        approach = [
-            "→ Jump in confidently",
-            "→ Light humor lands well",
-            "→ Match the pace"
-        ]
-    else:
-        approach = [
-            "→ Casual entry",
-            "→ Let conversation breathe",
-            "→ Listening helps"
-        ]
-
-    text = (
-        "🧠 ROOM VIBE\n"
-        "━━━━━━━━━━━━\n"
-        f"Energy: {energy}\n"
-        f"Dominance: {dominance}\n"
-        f"Flirt: {flirt}\n"
-        f"Risk: {risk}\n\n"
-        "Best approach:\n"
-        + "\n".join(approach)
+    return Response(
+        json.dumps({"text": text}, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
     )
-
-    return jsonify({"text": text})
 
     
 # =================================================
