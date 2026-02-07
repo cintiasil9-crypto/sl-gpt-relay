@@ -191,7 +191,7 @@ def build_summary(conf, traits, styles):
     return base
 
 # =================================================
-# BUILD PROFILES (FULL, UNCHANGED)
+# BUILD PROFILES (FULL, RESTORED, LEADERBOARD-SAFE)
 # =================================================
 
 def build_profiles():
@@ -209,50 +209,77 @@ def build_profiles():
         ts = float(r.get("timestamp", NOW))
         w = decay(ts)
 
-        p = profiles.setdefault(uid,{
+        p = profiles.setdefault(uid, {
             "avatar_uuid": uid,
-            "name": r.get("display_name","Unknown"),
+            "name": r.get("display_name", "Unknown"),
             "messages": 0,
             "raw_traits": defaultdict(float),
             "raw_styles": defaultdict(float),
             "recent": 0
         })
 
-        msgs = max(int(r.get("messages",1)),1)
+        msgs = max(int(r.get("messages", 1)), 1)
         p["messages"] += msgs * w
+
         if NOW - ts < 3600:
             p["recent"] += msgs
 
-        hits = extract_hits(r.get("context_sample",""))
-        for k,v in hits.items():
+        hits = extract_hits(r.get("context_sample", ""))
+
+        for k, v in hits.items():
             if k in TRAIT_WEIGHTS:
                 p["raw_traits"][k] += v * TRAIT_WEIGHTS[k] * w
             if k in STYLE_WEIGHTS:
                 p["raw_styles"][k] += v * STYLE_WEIGHTS[k] * w
 
     out = []
+
     for p in profiles.values():
-        m = max(p["messages"],1)
+        m = max(p["messages"], 1)
+
         confidence = min(1.0, math.log(m + 1) / 4)
         damp = max(0.05, confidence ** 1.5)
 
-        traits = {k: min((p["raw_traits"][k]/m)*damp,1.0) for k in TRAIT_WEIGHTS}
-        styles = {k: min((p["raw_styles"][k]/(m*0.3))*damp,1.0) for k in STYLE_WEIGHTS}
+        traits = {
+            k: min((p["raw_traits"][k] / m) * damp, 1.0)
+            for k in TRAIT_WEIGHTS
+        }
 
+        styles = {
+            k: min((p["raw_styles"][k] / (m * 0.3)) * damp, 1.0)
+            for k in STYLE_WEIGHTS
+        }
+
+        # ---------------- ENERGY METRICS (RESTORED) ----------------
+        risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
+        club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
+        hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
+
+        vibe = "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨"
+
+        # ---------------- PRETTY PROFILE TEXT ----------------
         pretty_text = (
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🧠 SOCIAL PROFILE\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 Avatar: {p['name']}\n"
-            f"🔥 Vibe: {'Active' if p['recent'] > 3 else 'Just Vibing'}\n"
-            f"📊 Confidence: {bar(int(confidence*100))} {int(confidence*100)}%\n\n"
+            f"🔥 Vibe: {vibe}\n"
+            f"📊 Confidence: {bar(int(confidence * 100))} {int(confidence * 100)}%\n\n"
             "🧩 PERSONALITY\n"
-            + row("💬","Engaging", int(traits["engaging"]*100)) + "\n"
-            + row("🧠","Curious", int(traits["curious"]*100)) + "\n"
-            + row("😂","Humorous", int(traits["humorous"]*100)) + "\n"
-            + row("🤍","Supportive", int(traits["supportive"]*100)) + "\n"
-            + row("👑","Dominant", int(traits["dominant"]*100)) + "\n"
-            + row("⚔","Combative", int(traits["combative"]*100)) + "\n\n"
+            + row("💬", "Engaging", int(traits["engaging"] * 100)) + "\n"
+            + row("🧠", "Curious", int(traits["curious"] * 100)) + "\n"
+            + row("😂", "Humorous", int(traits["humorous"] * 100)) + "\n"
+            + row("🤍", "Supportive", int(traits["supportive"] * 100)) + "\n"
+            + row("👑", "Dominant", int(traits["dominant"] * 100)) + "\n"
+            + row("⚔", "Combative", int(traits["combative"] * 100)) + "\n\n"
+            "💋 STYLE\n"
+            + row("💕", "Flirty", int(styles["flirty"] * 100)) + "\n"
+            + row("🔞", "Sexual", int(styles["sexual"] * 100)) + "\n"
+            + row("🤬", "Curse", int(styles["curse"] * 100)) + "\n\n"
+            "🌙 ENERGY\n"
+            + row("🎧", "Hangout", int(hangout * 100)) + "\n"
+            + row("🎉", "Club", int(club * 100)) + "\n"
+            + row("🔥", "Risk", int(risk * 100)) + "\n\n"
             "📝 Summary\n"
             + build_summary(confidence, traits, styles) + "\n"
             "━━━━━━━━━━━━━━━━━━━━"
@@ -261,10 +288,18 @@ def build_profiles():
         out.append({
             "avatar_uuid": p["avatar_uuid"],
             "name": p["name"],
+
             "confidence": int(confidence * 100),
+            "vibe": vibe,
             "recent": p["recent"],
-            "traits": {k:int(v*100) for k,v in traits.items()},
-            "styles": {k:int(v*100) for k,v in styles.items()},
+
+            "traits": {k: int(v * 100) for k, v in traits.items()},
+            "styles": {k: int(v * 100) for k, v in styles.items()},
+
+            "risk": int(risk * 100),
+            "club_energy": int(club * 100),
+            "hangout_energy": int(hangout * 100),
+
             "summary": build_summary(confidence, traits, styles),
             "pretty_text": pretty_text
         })
@@ -272,6 +307,7 @@ def build_profiles():
     CACHE["profiles"] = out
     CACHE["ts"] = time.time()
     return out
+
 
 # =================================================
 # ROOM VIBE ADD-ONS (NEW, NON-DESTRUCTIVE)
@@ -371,13 +407,14 @@ def room_vibe():
     pretty, html = build_room_vibe_enhanced(profiles)
 
     return Response(
-        json.dumps({
-            "legacy_text": legacy,
-            "pretty_text": pretty,
-            "html": html
-        }, ensure_ascii=False),
-        mimetype="application/json; charset=utf-8"
-    )
+    json.dumps({
+        "text": pretty,          # REQUIRED for current HUD (Script C)
+        "legacy_text": legacy,   # backward logic
+        "pretty_text": pretty,   # future UI
+        "html": html             # web / dashboard
+    }, ensure_ascii=False),
+    mimetype="application/json; charset=utf-8"
+)
 
 # =================================================
 # REMAINING ENDPOINTS (UNCHANGED)
