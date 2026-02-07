@@ -323,30 +323,51 @@ def presence_summary(profiles):
     if not profiles:
         return "None detected"
 
-    avg_dom   = sum(p["traits"]["dominant"] for p in profiles) / len(profiles)
-    avg_humor = sum(p["traits"]["humorous"] for p in profiles) / len(profiles)
-    avg_sup   = sum(p["traits"]["supportive"] for p in profiles) / len(profiles)
-    avg_risk  = sum(p["risk"] for p in profiles) / len(profiles)
+    # Count strong traits instead of averaging (averages hide signal)
+    trait_counts = {
+        "Dominant": 0,
+        "Humorous": 0,
+        "Supportive": 0,
+        "Combative": 0
+    }
 
-    tags = []
-    if avg_dom >= 45:   tags.append("Dominant")
-    if avg_humor >= 45: tags.append("Humorous")
-    if avg_sup >= 45:   tags.append("Supportive")
-    if avg_risk >= 45:  tags.append("Mixed Risk")
+    for p in profiles:
+        if p["traits"]["dominant"] >= 40:
+            trait_counts["Dominant"] += 1
+        if p["traits"]["humorous"] >= 40:
+            trait_counts["Humorous"] += 1
+        if p["traits"]["supportive"] >= 40:
+            trait_counts["Supportive"] += 1
+        if p["traits"]["combative"] >= 40:
+            trait_counts["Combative"] += 1
 
-    return " • ".join(tags) if tags else "Mixed personalities"
+    # Rank traits by frequency
+    ranked = sorted(trait_counts.items(), key=lambda x: x[1], reverse=True)
+
+    # Take top 2 that actually appear
+    top = [name for name, count in ranked if count > 0][:2]
+
+    return " • ".join(top) if top else "Mixed personalities"
 
 
 def live_chat_summary(profiles):
     total_recent = sum(p.get("recent", 0) for p in profiles)
+    high_conf = sum(1 for p in profiles if p.get("confidence", 0) >= 50)
 
-    if total_recent == 0:
-        return "Quiet"
-    if total_recent < 6:
-        return "Warming Up"
-    if total_recent < 15:
+    # --- LIVE CHAT ALWAYS WINS IF PRESENT ---
+    if total_recent >= 15:
+        return "Buzzing"
+    if total_recent >= 6:
         return "Active"
-    return "Buzzing"
+    if total_recent > 0:
+        return "Warming Up"
+
+    # --- FALLBACK: PRE-EXISTING CONVERSATION ---
+    # People were already talking before you arrived
+    if high_conf >= 3:
+        return "Active"
+
+    return "Quiet"
 
 
 def build_hybrid_room_vibe(profiles):
@@ -368,7 +389,7 @@ def build_hybrid_room_vibe(profiles):
         impression = "Early engagement forming. Easy, low-pressure entry."
     elif live == "Active":
         impression = "Conversation-ready. Joining now should land well."
-    else:
+    else:  # Buzzing
         impression = "High momentum. Match the pace or observe first."
 
     return (
