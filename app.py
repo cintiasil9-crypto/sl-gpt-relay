@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, make_response
 import os, time, math, requests, json, re
 from collections import defaultdict
 
@@ -364,37 +364,59 @@ def profiles_available():
         mimetype="application/json; charset=utf-8"
     )
     
-@app.route("/panel/profile/<uuid>")
+@app.route("/panel/profile/<uuid>", methods=["GET"])
 def panel_profile(uuid):
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
-            return f"""
-            <html>
-            <head>
-              <style>
-                body {{
-                  margin: 0;
-                  padding: 14px;
-                  font-family: Arial, sans-serif;
-                  background: #ffffff;
-                  color: #000000;
-                }}
-                h2 {{
-                  margin: 0 0 10px 0;
-                  font-size: 18px;
-                }}
-                pre {{
-                  white-space: pre-wrap;
-                  font-size: 13px;
-                }}
-              </style>
-            </head>
-            <body>
-              <h2>Social Profile</h2>
-              <pre>{p["pretty_text"]}</pre>
-            </body>
-            </html>
-            """
+
+            html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=512, height=512, initial-scale=1.0">
+
+<style>
+html, body {{
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+    font-family: Arial, Helvetica, sans-serif;
+}}
+
+#container {{
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 14px;
+    overflow-y: auto;
+}}
+
+pre {{
+    white-space: pre-wrap;
+    font-size: 14px;
+    line-height: 1.35;
+    color: #000;
+}}
+</style>
+</head>
+
+<body>
+  <div id="container">
+    <pre>{p["pretty_text"]}</pre>
+  </div>
+</body>
+</html>
+"""
+
+            resp = make_response(html)
+            resp.headers["Content-Type"] = "text/html"
+            resp.headers["X-Frame-Options"] = "ALLOWALL"
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            return resp
+
     return "<html><body>No profile yet.</body></html>"
 
 # =================================================
