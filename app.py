@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 import os, time, math, requests, json, re
 from collections import defaultdict
 
@@ -179,7 +179,7 @@ def build_summary(conf, traits, styles):
     return base
 
 # =================================================
-# BUILD PROFILES (CORE ENGINE)
+# BUILD PROFILES
 # =================================================
 
 def build_profiles():
@@ -198,6 +198,7 @@ def build_profiles():
         w = decay(ts)
 
         p = profiles.setdefault(uid,{
+            "avatar_uuid": uid,
             "name": r.get("display_name","Unknown"),
             "messages": 0,
             "raw_traits": defaultdict(float),
@@ -232,8 +233,9 @@ def build_profiles():
         hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
 
         out.append({
+            "avatar_uuid": p["avatar_uuid"],
             "name": p["name"],
-            "confidence": int(confidence*100),
+            "confidence": int(confidence * 100),
             "vibe": "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨",
             "summary": build_summary(confidence, traits, styles),
             "traits": {k:int(v*100) for k,v in traits.items()},
@@ -248,21 +250,31 @@ def build_profiles():
     return out
 
 # =================================================
-# HUD ENDPOINTS (NEW — THIS FIXES YOUR ERROR)
+# HUD ENDPOINTS (FIXED)
 # =================================================
 
-@app.route("/profile/self")
+@app.route("/profile/self", methods=["POST"])
 def profile_self():
+    data = request.get_json(silent=True) or {}
+    uuid = data.get("uuid")
+
+    if not uuid:
+        return jsonify({"error": "missing uuid"}), 400
+
+    for p in build_profiles():
+        if p["avatar_uuid"] == uuid:
+            return jsonify(p)
+
+    return jsonify({"error": "profile not found"}), 404
+
+
+@app.route("/profile/nearby", methods=["GET"])
+def profile_nearby():
     profiles = build_profiles()
     return jsonify(profiles[0]) if profiles else jsonify({})
 
-@app.route("/profile/nearby")
-def profile_nearby():
-    profiles = build_profiles()
-    return jsonify(profiles[1]) if len(profiles) > 1 else jsonify(profiles[0]) if profiles else jsonify({})
-
 # =================================================
-# WEBSITE ENDPOINT (UNCHANGED)
+# WEBSITE ENDPOINT
 # =================================================
 
 @app.route("/leaderboard")
