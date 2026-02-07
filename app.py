@@ -363,6 +363,111 @@ def profiles_available():
         json.dumps(payload, ensure_ascii=False),
         mimetype="application/json; charset=utf-8"
     )
+
+@app.route("/room/vibe", methods=["POST"])
+def room_vibe():
+    data = request.get_json(silent=True) or {}
+    uuids = set(data.get("uuids", []))
+
+    # Pull active profiles in range
+    profiles = [
+        p for p in build_profiles()
+        if p["avatar_uuid"] in uuids and p["confidence"] >= 20
+    ]
+
+    # Low-signal fallback
+    if len(profiles) < 2:
+        return jsonify({
+            "text":
+            "🧠 ROOM VIBE\n"
+            "━━━━━━━━━━━━\n"
+            "Room is quiet.\n"
+            "No strong signals yet."
+        })
+
+    def avg(key):
+        return sum(p[key] for p in profiles) / len(profiles)
+
+    def avg_nested(section, key):
+        return sum(p[section][key] for p in profiles) / len(profiles)
+
+    avg_conf   = avg("confidence")
+    avg_dom    = avg_nested("traits", "dominant")
+    avg_sup    = avg_nested("traits", "supportive")
+    avg_flirt  = avg_nested("styles", "flirty")
+    avg_risk   = avg("risk")
+
+    # ---------- ENERGY ----------
+    if avg_conf >= 60:
+        energy = "High"
+    elif avg_conf >= 35:
+        energy = "Moderate"
+    else:
+        energy = "Chill"
+
+    # ---------- DOMINANCE ----------
+    if avg_dom >= 50:
+        dominance = "Strong"
+    elif avg_dom >= 30:
+        dominance = "Mixed"
+    else:
+        dominance = "Low"
+
+    # ---------- FLIRT ----------
+    if avg_flirt >= 45:
+        flirt = "High"
+    elif avg_flirt >= 25:
+        flirt = "Medium"
+    else:
+        flirt = "Low"
+
+    # ---------- RISK ----------
+    if avg_risk >= 55:
+        risk = "Volatile"
+    elif avg_risk >= 30:
+        risk = "Mixed"
+    else:
+        risk = "Safe"
+
+    # ---------- BEST APPROACH ----------
+    if risk == "Volatile":
+        approach = [
+            "→ Keep it neutral",
+            "→ Avoid hot takes",
+            "→ Timing matters"
+        ]
+    elif dominance == "Strong" and risk != "Safe":
+        approach = [
+            "→ Observe first",
+            "→ Humor may misfire",
+            "→ Don’t challenge early"
+        ]
+    elif energy == "High" and risk == "Safe":
+        approach = [
+            "→ Jump in confidently",
+            "→ Light humor lands well",
+            "→ Match the pace"
+        ]
+    else:
+        approach = [
+            "→ Casual entry",
+            "→ Let conversation breathe",
+            "→ Listening helps"
+        ]
+
+    text = (
+        "🧠 ROOM VIBE\n"
+        "━━━━━━━━━━━━\n"
+        f"Energy: {energy}\n"
+        f"Dominance: {dominance}\n"
+        f"Flirt: {flirt}\n"
+        f"Risk: {risk}\n\n"
+        "Best approach:\n"
+        + "\n".join(approach)
+    )
+
+    return jsonify({"text": text})
+
     
 # =================================================
 # WEBSITE ENDPOINT
