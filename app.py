@@ -302,6 +302,13 @@ def profile_by_uuid():
 
     return jsonify({"error": "profile not found"}), 404
 
+@app.route("/profile/<uuid>", methods=["GET"])
+def profile_by_uuid_get(uuid):
+    for p in build_profiles():
+        if p["avatar_uuid"] == uuid:
+            return jsonify(p)
+
+    return jsonify({"error": "profile not found"}), 404
 
 # =================================================
 # WEBSITE ENDPOINT
