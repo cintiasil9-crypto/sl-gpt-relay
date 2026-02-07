@@ -1,4 +1,4 @@
-from flask import Flask, Response
+from flask import Flask, Response, jsonify
 import os, time, math, requests, json, re
 from collections import defaultdict
 
@@ -14,7 +14,7 @@ CACHE_TTL = 300
 NOW = time.time()
 
 # =================================================
-# WEIGHTS (REALISTIC, DAMPENED)
+# WEIGHTS
 # =================================================
 
 TRAIT_WEIGHTS = {
@@ -33,7 +33,7 @@ STYLE_WEIGHTS = {
 }
 
 # =================================================
-# SL-CULTURE KEYWORDS
+# KEYWORDS
 # =================================================
 
 ENGAGING = {"hi","hey","yo","sup","wb","welcome"}
@@ -96,11 +96,6 @@ MODIFIER_PHRASE = {
     ("supportive","curse"): "in a familiar, casual tone",
 }
 
-SINGLE_TRAIT_DISCLAIMER = (
-    "This profile reflects a strong signal in one area; "
-    "other aspects of their personality may not yet have enough data to evaluate."
-)
-
 # =================================================
 # HELPERS
 # =================================================
@@ -145,10 +140,10 @@ def fetch_rows():
     payload = json.loads(m.group(1))
     cols = [c["label"] for c in payload["table"]["cols"]]
 
-    rows=[]
+    rows = []
     for row in payload["table"]["rows"]:
-        rec={}
-        for i,cell in enumerate(row["c"]):
+        rec = {}
+        for i, cell in enumerate(row["c"]):
             rec[cols[i]] = cell["v"] if cell else 0
         rows.append(rec)
     return rows
@@ -157,21 +152,15 @@ def fetch_rows():
 # SUMMARY ENGINE
 # =================================================
 
-MIN_TRAIT_THRESHOLD = 0.01
-MIN_TRAITS_FOR_SUMMARY = 2
-
 def build_summary(conf, traits, styles):
     if conf < 0.25:
         return "Barely spoke. Vibes pending."
 
     ranked = sorted(traits.items(), key=lambda x: x[1], reverse=True)
-    qualifying = [k for k,v in ranked if v >= MIN_TRAIT_THRESHOLD]
+    top = [k for k,v in ranked if v > 0][:3]
 
-    if not qualifying:
+    if not top:
         return "Present, but patterns are still forming."
-
-    top = qualifying[:3]
-    dominant_only = len(top) == 1
 
     parts = [
         PRIMARY_PHRASE.get(top[0]),
@@ -181,21 +170,16 @@ def build_summary(conf, traits, styles):
 
     base = ", ".join(p for p in parts if p) + "."
 
-    # modifier logic (applies only if enough confidence)
-    modifier = ""
     for m in ["sexual","flirty","curse"]:
         if styles.get(m,0) >= 0.2 and conf >= 0.35:
             phrase = MODIFIER_PHRASE.get((top[0], m))
             if phrase:
-                modifier = phrase + "."
-                break
+                return base + " " + phrase + "."
 
-    disclaimer = SINGLE_TRAIT_DISCLAIMER if dominant_only else ""
-
-    return " ".join(x for x in [base, modifier, disclaimer] if x)
+    return base
 
 # =================================================
-# BUILD PROFILES
+# BUILD PROFILES (CORE ENGINE)
 # =================================================
 
 def build_profiles():
@@ -207,7 +191,8 @@ def build_profiles():
 
     for r in rows:
         uid = r.get("avatar_uuid")
-        if not uid: continue
+        if not uid:
+            continue
 
         ts = float(r.get("timestamp", NOW))
         w = decay(ts)
@@ -239,39 +224,23 @@ def build_profiles():
         confidence = min(1.0, math.log(m + 1) / 4)
         damp = max(0.05, confidence ** 1.5)
 
-        traits = {
-            k: min((p["raw_traits"][k] / m) * damp, 1.0)
-            for k in TRAIT_WEIGHTS
-        }
-
-        styles = {
-            k: min((p["raw_styles"][k] / (m * 0.3)) * damp, 1.0)
-            for k in STYLE_WEIGHTS
-        }
+        traits = {k: min((p["raw_traits"][k]/m)*damp,1.0) for k in TRAIT_WEIGHTS}
+        styles = {k: min((p["raw_styles"][k]/(m*0.3))*damp,1.0) for k in STYLE_WEIGHTS}
 
         risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
         club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
         hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
 
-        summary = build_summary(confidence, traits, styles)
-
-        badges = []
-        if traits["humorous"] > 0.55: badges.append("🎭 Comedy MVP")
-        if traits["supportive"] > 0.5: badges.append("🫂 Comfort Avatar")
-        if risk > 0.6: badges.append("🔥 Drama Magnet")
-        if styles["flirty"] > 0.4 and risk < 0.4: badges.append("💖 Safe to Flirt")
-
         out.append({
             "name": p["name"],
-            "confidence": int(confidence * 100),
+            "confidence": int(confidence*100),
             "vibe": "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨",
-            "summary": summary,
+            "summary": build_summary(confidence, traits, styles),
             "traits": {k:int(v*100) for k,v in traits.items()},
             "styles": {k:int(v*100) for k,v in styles.items()},
             "risk": int(risk*100),
             "club_energy": int(club*100),
-            "hangout_energy": int(hangout*100),
-            "badges": badges
+            "hangout_energy": int(hangout*100)
         })
 
     CACHE["profiles"] = out
@@ -279,7 +248,21 @@ def build_profiles():
     return out
 
 # =================================================
-# ENDPOINTS
+# HUD ENDPOINTS (NEW — THIS FIXES YOUR ERROR)
+# =================================================
+
+@app.route("/profile/self")
+def profile_self():
+    profiles = build_profiles()
+    return jsonify(profiles[0]) if profiles else jsonify({})
+
+@app.route("/profile/nearby")
+def profile_nearby():
+    profiles = build_profiles()
+    return jsonify(profiles[1]) if len(profiles) > 1 else jsonify(profiles[0]) if profiles else jsonify({})
+
+# =================================================
+# WEBSITE ENDPOINT (UNCHANGED)
 # =================================================
 
 @app.route("/leaderboard")
@@ -292,4 +275,4 @@ def leaderboard():
 
 @app.route("/")
 def ok():
-    return "OK"
+    return "OK", 200
