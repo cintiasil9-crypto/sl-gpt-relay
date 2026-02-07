@@ -97,6 +97,17 @@ MODIFIER_PHRASE = {
 }
 
 # =================================================
+# VISUAL HELPERS (SL CHAT SAFE)
+# =================================================
+
+def bar(v, width=5):
+    filled = int(round((v / 100) * width))
+    return "█" * filled + "▒" * (width - filled)
+
+def row(icon, label, value):
+    return f"{icon} {label:<11} {bar(value)} {value:>3}%"
+
+# =================================================
 # HELPERS
 # =================================================
 
@@ -232,6 +243,47 @@ def build_profiles():
         club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
         hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
 
+        badges = []
+        if traits["humorous"] > 0.55: badges.append("🎭 Comedy MVP")
+        if traits["supportive"] > 0.5: badges.append("🫂 Comfort Avatar")
+        if risk > 0.6: badges.append("🔥 Drama Magnet")
+        if styles["flirty"] > 0.4 and risk < 0.4: badges.append("💖 Safe to Flirt")
+        if confidence > 0.75: badges.append("📈 High Signal")
+
+        pretty_text = (
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🧠 SOCIAL PROFILE\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 Avatar: {p['name']}\n"
+            f"🔥 Vibe: {'Active' if p['recent'] > 3 else 'Just Vibing'}\n"
+            f"📊 Confidence: {bar(int(confidence*100))} {int(confidence*100)}%\n\n"
+
+            "🧩 PERSONALITY\n"
+            + row("💬","Engaging", int(traits["engaging"]*100)) + "\n"
+            + row("🧠","Curious", int(traits["curious"]*100)) + "\n"
+            + row("😂","Humorous", int(traits["humorous"]*100)) + "\n"
+            + row("🤍","Supportive", int(traits["supportive"]*100)) + "\n"
+            + row("👑","Dominant", int(traits["dominant"]*100)) + "\n"
+            + row("⚔","Combative", int(traits["combative"]*100)) + "\n\n"
+
+            "💋 STYLE\n"
+            + row("💕","Flirty", int(styles["flirty"]*100)) + "\n"
+            + row("🔞","Sexual", int(styles["sexual"]*100)) + "\n"
+            + row("🤬","Curse", int(styles["curse"]*100)) + "\n\n"
+
+            "🌙 ENERGY\n"
+            + row("🎧","Hangout", int(hangout*100)) + "\n"
+            + row("🎉","Club", int(club*100)) + "\n"
+            + row("🔥","Risk", int(risk*100)) + "\n\n"
+
+            "🏅 BADGES\n"
+            + (", ".join(badges) if badges else "None") + "\n\n"
+
+            "📝 Summary\n"
+            + build_summary(confidence, traits, styles) + "\n"
+            "━━━━━━━━━━━━━━━━━━━━"
+        )
+
         out.append({
             "avatar_uuid": p["avatar_uuid"],
             "name": p["name"],
@@ -242,7 +294,9 @@ def build_profiles():
             "styles": {k:int(v*100) for k,v in styles.items()},
             "risk": int(risk*100),
             "club_energy": int(club*100),
-            "hangout_energy": int(hangout*100)
+            "hangout_energy": int(hangout*100),
+            "badges": badges,
+            "pretty_text": pretty_text
         })
 
     CACHE["profiles"] = out
@@ -250,7 +304,7 @@ def build_profiles():
     return out
 
 # =================================================
-# HUD ENDPOINTS (FIXED)
+# HUD ENDPOINTS
 # =================================================
 
 @app.route("/profile/self", methods=["POST"])
@@ -268,47 +322,24 @@ def profile_self():
     return jsonify({"error": "profile not found"}), 404
 
 
-@app.route("/profile/nearby", methods=["GET"])
-def profile_nearby():
-    profiles = build_profiles()
-    return jsonify(profiles[0]) if profiles else jsonify({})
+@app.route("/profile/<uuid>", methods=["GET"])
+def profile_by_uuid(uuid):
+    for p in build_profiles():
+        if p["avatar_uuid"] == uuid:
+            return jsonify(p)
+    return jsonify({"error": "profile not found"}), 404
+
 
 @app.route("/profiles/available", methods=["POST"])
 def profiles_available():
     data = request.get_json(silent=True) or {}
     uuids = set(data.get("uuids", []))
 
-    results = []
-    for p in build_profiles():
-        if p["avatar_uuid"] in uuids:
-            results.append({
-                "name": p["name"],
-                "uuid": p["avatar_uuid"]
-            })
-
-    return jsonify(results)
-
-@app.route("/profile/uuid", methods=["POST"])
-def profile_by_uuid():
-    data = request.get_json(silent=True) or {}
-    uuid = data.get("uuid")
-
-    if not uuid:
-        return jsonify({"error": "missing uuid"}), 400
-
-    for p in build_profiles():
-        if p["avatar_uuid"] == uuid:
-            return jsonify(p)
-
-    return jsonify({"error": "profile not found"}), 404
-
-@app.route("/profile/<uuid>", methods=["GET"])
-def profile_by_uuid_get(uuid):
-    for p in build_profiles():
-        if p["avatar_uuid"] == uuid:
-            return jsonify(p)
-
-    return jsonify({"error": "profile not found"}), 404
+    return jsonify([
+        {"name": p["name"], "uuid": p["avatar_uuid"]}
+        for p in build_profiles()
+        if p["avatar_uuid"] in uuids
+    ])
 
 # =================================================
 # WEBSITE ENDPOINT
