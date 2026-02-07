@@ -1,4 +1,4 @@
-from flask import Flask, Response, request
+from flask import Flask, Response, jsonify, request
 import os, time, math, requests, json, re
 from collections import defaultdict
 
@@ -38,7 +38,7 @@ STYLE_WEIGHTS = {
 
 ENGAGING = {"hi","hey","yo","sup","wb","welcome"}
 CURIOUS = {"why","how","what","where","when","who"}
-HUMOR = {"lol","lmao","haha","rofl","😂","🤣"}
+HUMOR = {"lol","lmao","haha","rofl"}
 SUPPORT = {"sorry","hope","ok","there","np","hug","hugs","here"}
 DOMINANT = {"listen","look","stop","wait","now"}
 COMBATIVE = {"idiot","stupid","shut","wtf","dumb"}
@@ -85,27 +85,27 @@ MODIFIER_PHRASE = {
     ("humorous","flirty"): "through playful flirtation",
     ("supportive","flirty"): "with warm, gentle flirtation",
     ("dominant","flirty"): "with confident flirtation",
-
     ("curious","sexual"): "with adult curiosity",
-    ("supportive","sexual"): "with emotional intimacy and adult undertones",
-    ("dominant","sexual"): "with bold, adult energy",
+    ("supportive","sexual"): "with emotional intimacy",
+    ("dominant","sexual"): "with bold adult energy",
     ("humorous","sexual"): "using shock humor",
-
     ("humorous","curse"): "with crude humor",
     ("dominant","curse"): "in a forceful, unfiltered way",
     ("supportive","curse"): "in a familiar, casual tone",
 }
 
 # =================================================
-# VISUAL HELPERS (SL CHAT SAFE)
+# SL CHAT SAFE VISUAL HELPERS
 # =================================================
+
+SEP = "===================="
 
 def bar(v, width=5):
     filled = int(round((v / 100) * width))
-    return "█" * filled + "▒" * (width - filled)
+    return "#" * filled + "-" * (width - filled)
 
-def row(icon, label, value):
-    return f"{icon} {label:<11} {bar(value)} {value:>3}%"
+def row(label, value):
+    return f"{label:<11} {bar(value)} {value:>3}%"
 
 # =================================================
 # HELPERS
@@ -232,70 +232,57 @@ def build_profiles():
     out = []
     for p in profiles.values():
         m = max(p["messages"],1)
-
         confidence = min(1.0, math.log(m + 1) / 4)
-        damp = max(0.05, confidence ** 1.5)
 
-        traits = {k: min((p["raw_traits"][k]/m)*damp,1.0) for k in TRAIT_WEIGHTS}
-        styles = {k: min((p["raw_styles"][k]/(m*0.3))*damp,1.0) for k in STYLE_WEIGHTS}
+        traits = {k:int(min((p["raw_traits"][k]/m),1.0)*100) for k in TRAIT_WEIGHTS}
+        styles = {k:int(min((p["raw_styles"][k]/m),1.0)*100) for k in STYLE_WEIGHTS}
 
-        risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
-        club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
-        hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
+        risk = int(min((traits["combative"] + styles["curse"]) * 0.5, 100))
+        club = int(min((traits["dominant"] + styles["sexual"]) * 0.5, 100))
+        hangout = int(min((traits["supportive"] + traits["curious"]) * 0.5, 100))
 
         badges = []
-        if traits["humorous"] > 0.55: badges.append("🎭 Comedy MVP")
-        if traits["supportive"] > 0.5: badges.append("🫂 Comfort Avatar")
-        if risk > 0.6: badges.append("🔥 Drama Magnet")
-        if styles["flirty"] > 0.4 and risk < 0.4: badges.append("💖 Safe to Flirt")
-        if confidence > 0.75: badges.append("📈 High Signal")
+        if traits["humorous"] > 55: badges.append("Comedy MVP")
+        if traits["supportive"] > 50: badges.append("Comfort Avatar")
+        if confidence > 0.75: badges.append("High Signal")
 
         pretty_text = (
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🧠 SOCIAL PROFILE\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 Avatar: {p['name']}\n"
-            f"🔥 Vibe: {'Active' if p['recent'] > 3 else 'Just Vibing'}\n"
-            f"📊 Confidence: {bar(int(confidence*100))} {int(confidence*100)}%\n\n"
+            f"{SEP}\n"
+            "SOCIAL PROFILE\n"
+            f"{SEP}\n"
+            f"Avatar: {p['name']}\n"
+            f"Vibe: {'Active' if p['recent'] > 3 else 'Just Vibing'}\n"
+            f"Confidence: {bar(int(confidence*100))} {int(confidence*100)}%\n\n"
 
-            "🧩 PERSONALITY\n"
-            + row("💬","Engaging", int(traits["engaging"]*100)) + "\n"
-            + row("🧠","Curious", int(traits["curious"]*100)) + "\n"
-            + row("😂","Humorous", int(traits["humorous"]*100)) + "\n"
-            + row("🤍","Supportive", int(traits["supportive"]*100)) + "\n"
-            + row("👑","Dominant", int(traits["dominant"]*100)) + "\n"
-            + row("⚔","Combative", int(traits["combative"]*100)) + "\n\n"
+            "PERSONALITY\n"
+            + row("Engaging", traits["engaging"]) + "\n"
+            + row("Curious", traits["curious"]) + "\n"
+            + row("Humorous", traits["humorous"]) + "\n"
+            + row("Supportive", traits["supportive"]) + "\n"
+            + row("Dominant", traits["dominant"]) + "\n"
+            + row("Combative", traits["combative"]) + "\n\n"
 
-            "💋 STYLE\n"
-            + row("💕","Flirty", int(styles["flirty"]*100)) + "\n"
-            + row("🔞","Sexual", int(styles["sexual"]*100)) + "\n"
-            + row("🤬","Curse", int(styles["curse"]*100)) + "\n\n"
+            "STYLE\n"
+            + row("Flirty", styles["flirty"]) + "\n"
+            + row("Sexual", styles["sexual"]) + "\n"
+            + row("Curse", styles["curse"]) + "\n\n"
 
-            "🌙 ENERGY\n"
-            + row("🎧","Hangout", int(hangout*100)) + "\n"
-            + row("🎉","Club", int(club*100)) + "\n"
-            + row("🔥","Risk", int(risk*100)) + "\n\n"
+            "ENERGY\n"
+            + row("Hangout", hangout) + "\n"
+            + row("Club", club) + "\n"
+            + row("Risk", risk) + "\n\n"
 
-            "🏅 BADGES\n"
+            "BADGES\n"
             + (", ".join(badges) if badges else "None") + "\n\n"
 
-            "📝 Summary\n"
+            "Summary\n"
             + build_summary(confidence, traits, styles) + "\n"
-            "━━━━━━━━━━━━━━━━━━━━"
+            f"{SEP}"
         )
 
         out.append({
             "avatar_uuid": p["avatar_uuid"],
             "name": p["name"],
-            "confidence": int(confidence * 100),
-            "vibe": "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨",
-            "summary": build_summary(confidence, traits, styles),
-            "traits": {k:int(v*100) for k,v in traits.items()},
-            "styles": {k:int(v*100) for k,v in styles.items()},
-            "risk": int(risk*100),
-            "club_energy": int(club*100),
-            "hangout_energy": int(hangout*100),
-            "badges": badges,
             "pretty_text": pretty_text
         })
 
@@ -311,57 +298,18 @@ def build_profiles():
 def profile_self():
     data = request.get_json(silent=True) or {}
     uuid = data.get("uuid")
-
-    if not uuid:
-        return Response(
-            json.dumps({"error": "missing uuid"}, ensure_ascii=False),
-            mimetype="application/json",
-            status=400
-        )
-
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
-            return Response(
-                json.dumps(p, ensure_ascii=False),
-                mimetype="application/json"
-            )
-
-    return Response(
-        json.dumps({"error": "profile not found"}, ensure_ascii=False),
-        mimetype="application/json",
-        status=404
-    )
+            return jsonify(p)
+    return jsonify({"error": "profile not found"}), 404
 
 @app.route("/profile/<uuid>", methods=["GET"])
 def profile_by_uuid(uuid):
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
-            return Response(
-                json.dumps(p, ensure_ascii=False),
-                mimetype="application/json"
-            )
+            return jsonify(p)
+    return jsonify({"error": "profile not found"}), 404
 
-    return Response(
-        json.dumps({"error": "profile not found"}, ensure_ascii=False),
-        mimetype="application/json",
-        status=404
-    )
-
-@app.route("/profiles/available", methods=["POST"])
-def profiles_available():
-    data = request.get_json(silent=True) or {}
-    uuids = set(data.get("uuids", []))
-
-    payload = [
-        {"name": p["name"], "uuid": p["avatar_uuid"]}
-        for p in build_profiles()
-        if p["avatar_uuid"] in uuids
-    ]
-
-    return Response(
-        json.dumps(payload, ensure_ascii=False),
-        mimetype="application/json"
-    )
 
 # =================================================
 # WEBSITE ENDPOINT
