@@ -141,10 +141,6 @@ def extract_hits(text):
 
     return hits
 
-def single_trait_warning(traits):
-    strong = [k for k,v in traits.items() if v >= 0.10]
-    return len(strong) <= 1
-
 # =================================================
 # DATA FETCH
 # =================================================
@@ -168,6 +164,9 @@ def fetch_rows():
 # =================================================
 
 def build_summary(conf, traits, styles):
+    if conf < 0.25:
+        return "Barely spoke. Vibes pending."
+
     ranked = sorted(traits.items(), key=lambda x: x[1], reverse=True)
     top = [k for k,v in ranked if v > 0][:3]
 
@@ -233,23 +232,23 @@ def build_profiles():
     out = []
     for p in profiles.values():
         m = max(p["messages"],1)
+
         confidence = min(1.0, math.log(m + 1) / 4)
         damp = max(0.05, confidence ** 1.5)
 
         traits = {k: min((p["raw_traits"][k]/m)*damp,1.0) for k in TRAIT_WEIGHTS}
         styles = {k: min((p["raw_styles"][k]/(m*0.3))*damp,1.0) for k in STYLE_WEIGHTS}
 
-        forming = confidence < 0.25 or single_trait_warning(traits)
-
-        summary = (
-            "Profile forming — limited signal. Traits may shift with more interaction."
-            if forming else build_summary(confidence, traits, styles)
-        )
+        risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
+        club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
+        hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
 
         badges = []
-        if forming: badges.append("🧩 Profile Forming")
         if traits["humorous"] > 0.55: badges.append("🎭 Comedy MVP")
-        if traits["supportive"] > 0.5: badges.append("💖 Safe Space")
+        if traits["supportive"] > 0.5: badges.append("🫂 Comfort Avatar")
+        if risk > 0.6: badges.append("🔥 Drama Magnet")
+        if styles["flirty"] > 0.4 and risk < 0.4: badges.append("💖 Safe to Flirt")
+        if confidence > 0.75: badges.append("📈 High Signal")
 
         pretty_text = (
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -257,8 +256,8 @@ def build_profiles():
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 Avatar: {p['name']}\n"
             f"🔥 Vibe: {'Active' if p['recent'] > 3 else 'Just Vibing'}\n"
-            f"📊 Confidence: {bar(int(confidence*100))} {int(confidence*100)}%\n"
-            + ("\n⚠ Profile forming — limited signal\n" if forming else "\n") +
+            f"📊 Confidence: {bar(int(confidence*100))} {int(confidence*100)}%\n\n"
+
             "🧩 PERSONALITY\n"
             + row("💬","Engaging", int(traits["engaging"]*100)) + "\n"
             + row("🧠","Curious", int(traits["curious"]*100)) + "\n"
@@ -266,7 +265,22 @@ def build_profiles():
             + row("🤍","Supportive", int(traits["supportive"]*100)) + "\n"
             + row("👑","Dominant", int(traits["dominant"]*100)) + "\n"
             + row("⚔","Combative", int(traits["combative"]*100)) + "\n\n"
-            "📝 Summary\n" + summary + "\n"
+
+            "💋 STYLE\n"
+            + row("💕","Flirty", int(styles["flirty"]*100)) + "\n"
+            + row("🔞","Sexual", int(styles["sexual"]*100)) + "\n"
+            + row("🤬","Curse", int(styles["curse"]*100)) + "\n\n"
+
+            "🌙 ENERGY\n"
+            + row("🎧","Hangout", int(hangout*100)) + "\n"
+            + row("🎉","Club", int(club*100)) + "\n"
+            + row("🔥","Risk", int(risk*100)) + "\n\n"
+
+            "🏅 BADGES\n"
+            + (", ".join(badges) if badges else "None") + "\n\n"
+
+            "📝 Summary\n"
+            + build_summary(confidence, traits, styles) + "\n"
             "━━━━━━━━━━━━━━━━━━━━"
         )
 
@@ -274,12 +288,14 @@ def build_profiles():
             "avatar_uuid": p["avatar_uuid"],
             "name": p["name"],
             "confidence": int(confidence * 100),
-            "forming": forming,
-            "disclaimer": summary if forming else "",
+            "vibe": "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨",
+            "summary": build_summary(confidence, traits, styles),
             "traits": {k:int(v*100) for k,v in traits.items()},
             "styles": {k:int(v*100) for k,v in styles.items()},
+            "risk": int(risk*100),
+            "club_energy": int(club*100),
+            "hangout_energy": int(hangout*100),
             "badges": badges,
-            "summary": summary,
             "pretty_text": pretty_text
         })
 
@@ -288,16 +304,23 @@ def build_profiles():
     return out
 
 # =================================================
-# HUD ENDPOINTS (SL)
+# HUD ENDPOINTS
 # =================================================
 
 @app.route("/profile/self", methods=["POST"])
 def profile_self():
-    uuid = (request.get_json(silent=True) or {}).get("uuid")
+    data = request.get_json(silent=True) or {}
+    uuid = data.get("uuid")
+
+    if not uuid:
+        return jsonify({"error": "missing uuid"}), 400
+
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
             return jsonify(p)
+
     return jsonify({"error": "profile not found"}), 404
+
 
 @app.route("/profile/<uuid>", methods=["GET"])
 def profile_by_uuid(uuid):
@@ -306,9 +329,12 @@ def profile_by_uuid(uuid):
             return jsonify(p)
     return jsonify({"error": "profile not found"}), 404
 
+
 @app.route("/profiles/available", methods=["POST"])
 def profiles_available():
-    uuids = set((request.get_json(silent=True) or {}).get("uuids", []))
+    data = request.get_json(silent=True) or {}
+    uuids = set(data.get("uuids", []))
+
     return jsonify([
         {"name": p["name"], "uuid": p["avatar_uuid"]}
         for p in build_profiles()
