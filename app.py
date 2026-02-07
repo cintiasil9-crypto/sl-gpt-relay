@@ -317,16 +317,22 @@ def profile_self():
 
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
-            return jsonify(p)
+            return Response(
+                json.dumps(p, ensure_ascii=False),
+                mimetype="application/json; charset=utf-8"
+            )
 
     return jsonify({"error": "profile not found"}), 404
-
 
 @app.route("/profile/<uuid>", methods=["GET"])
 def profile_by_uuid(uuid):
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
-            return jsonify(p)
+            return Response(
+                json.dumps(p, ensure_ascii=False),
+                mimetype="application/json; charset=utf-8"
+            )
+
     return jsonify({"error": "profile not found"}), 404
 
 
@@ -335,11 +341,16 @@ def profiles_available():
     data = request.get_json(silent=True) or {}
     uuids = set(data.get("uuids", []))
 
-    return jsonify([
+    payload = [
         {"name": p["name"], "uuid": p["avatar_uuid"]}
         for p in build_profiles()
         if p["avatar_uuid"] in uuids
-    ])
+    ]
+
+    return Response(
+        json.dumps(payload, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
 
 # =================================================
 # WEBSITE ENDPOINT
