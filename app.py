@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, request
 import os, time, math, requests, json, re
 from collections import defaultdict
 
@@ -313,33 +313,55 @@ def profile_self():
     uuid = data.get("uuid")
 
     if not uuid:
-        return jsonify({"error": "missing uuid"}), 400
+        return Response(
+            json.dumps({"error": "missing uuid"}, ensure_ascii=False),
+            mimetype="application/json",
+            status=400
+        )
 
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
-            return jsonify(p)
+            return Response(
+                json.dumps(p, ensure_ascii=False),
+                mimetype="application/json"
+            )
 
-    return jsonify({"error": "profile not found"}), 404
-
+    return Response(
+        json.dumps({"error": "profile not found"}, ensure_ascii=False),
+        mimetype="application/json",
+        status=404
+    )
 
 @app.route("/profile/<uuid>", methods=["GET"])
 def profile_by_uuid(uuid):
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
-            return jsonify(p)
-    return jsonify({"error": "profile not found"}), 404
+            return Response(
+                json.dumps(p, ensure_ascii=False),
+                mimetype="application/json"
+            )
 
+    return Response(
+        json.dumps({"error": "profile not found"}, ensure_ascii=False),
+        mimetype="application/json",
+        status=404
+    )
 
 @app.route("/profiles/available", methods=["POST"])
 def profiles_available():
     data = request.get_json(silent=True) or {}
     uuids = set(data.get("uuids", []))
 
-    return jsonify([
+    payload = [
         {"name": p["name"], "uuid": p["avatar_uuid"]}
         for p in build_profiles()
         if p["avatar_uuid"] in uuids
-    ])
+    ]
+
+    return Response(
+        json.dumps(payload, ensure_ascii=False),
+        mimetype="application/json"
+    )
 
 # =================================================
 # WEBSITE ENDPOINT
