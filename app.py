@@ -307,6 +307,53 @@ def build_profiles():
     CACHE["profiles"] = out
     CACHE["ts"] = time.time()
     return out
+# =================================================
+# ROOM VIBE HELPERS (REQUIRED)
+# =================================================
+
+def presence_summary(profiles):
+    if not profiles:
+        return "None"
+
+    trait_counts = {
+        "Dominant": 0,
+        "Humorous": 0,
+        "Supportive": 0,
+        "Combative": 0
+    }
+
+    for p in profiles:
+        t = p.get("traits", {})
+        if t.get("dominant", 0) >= 40:
+            trait_counts["Dominant"] += 1
+        if t.get("humorous", 0) >= 40:
+            trait_counts["Humorous"] += 1
+        if t.get("supportive", 0) >= 40:
+            trait_counts["Supportive"] += 1
+        if t.get("combative", 0) >= 40:
+            trait_counts["Combative"] += 1
+
+    ranked = sorted(trait_counts.items(), key=lambda x: x[1], reverse=True)
+    top = [name for name, count in ranked if count > 0][:2]
+
+    return " • ".join(top) if top else "Mixed personalities"
+
+
+def live_chat_summary(profiles):
+    total_recent = sum(p.get("recent", 0) for p in profiles)
+    high_conf = sum(1 for p in profiles if p.get("confidence", 0) >= 50)
+
+    if total_recent >= 15:
+        return "Buzzing"
+    if total_recent >= 6:
+        return "Active"
+    if total_recent > 0:
+        return "Warming Up"
+
+    if high_conf >= 3:
+        return "Active"
+
+    return "Quiet"
 
 
 # =================================================
