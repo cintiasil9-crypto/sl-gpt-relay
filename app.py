@@ -393,7 +393,7 @@ def build_room_vibe_enhanced(profiles):
     return pretty, html
 
 # =================================================
-# ROOM VIBE ENDPOINT (BACKWARD-COMPATIBLE)
+# ROOM VIBE ENDPOINT (SL-SAFE, PROFILE-STYLE)
 # =================================================
 
 @app.route("/room/vibe", methods=["POST"])
@@ -401,20 +401,19 @@ def room_vibe():
     data = request.get_json(silent=True) or {}
     uuids = set(data.get("uuids", []))
 
-    profiles = [p for p in build_profiles() if p["avatar_uuid"] in uuids]
+    profiles = [
+        p for p in build_profiles()
+        if p["avatar_uuid"] in uuids
+    ]
 
-    legacy = build_hybrid_room_vibe(profiles)
     pretty, html = build_room_vibe_enhanced(profiles)
 
     return Response(
-    json.dumps({
-        "text": pretty,          # REQUIRED for current HUD (Script C)
-        "legacy_text": legacy,   # backward logic
-        "pretty_text": pretty,   # future UI
-        "html": html             # web / dashboard
-    }, ensure_ascii=False),
-    mimetype="application/json; charset=utf-8"
-)
+        json.dumps({
+            "pretty_text": pretty   # ← ONLY thing SL needs
+        }, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
 
 # =================================================
 # REMAINING ENDPOINTS (UNCHANGED)
