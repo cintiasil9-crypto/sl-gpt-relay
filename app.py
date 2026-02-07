@@ -101,7 +101,10 @@ MODIFIER_PHRASE = {
 # =================================================
 
 def bar(v, width=5):
-    filled = int(round((v / 100) * width))
+    if v <= 0:
+        return "▒" * width
+
+    filled = max(1, int(round((v / 100) * width)))
     return "█" * filled + "▒" * (width - filled)
 
 def row(icon, label, value):
@@ -172,6 +175,15 @@ def build_summary(conf, traits, styles):
 
     if not top:
         return "Present, but patterns are still forming."
+
+    # --- SINGLE TRAIT DISCLAIMER ---
+    if len(top) == 1:
+        base = PRIMARY_PHRASE.get(top[0]) + "."
+        return (
+            base
+            + " This trait stands out strongly, but there isn’t enough data yet "
+              "to reliably assess other aspects."
+        )
 
     parts = [
         PRIMARY_PHRASE.get(top[0]),
