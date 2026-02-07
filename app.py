@@ -38,7 +38,7 @@ STYLE_WEIGHTS = {
 
 ENGAGING = {"hi","hey","yo","sup","wb","welcome"}
 CURIOUS = {"why","how","what","where","when","who"}
-HUMOR = {"lol","lmao","haha","rofl"}
+HUMOR = {"lol","lmao","haha","rofl","😂","🤣"}
 SUPPORT = {"sorry","hope","ok","there","np","hug","hugs","here"}
 DOMINANT = {"listen","look","stop","wait","now"}
 COMBATIVE = {"idiot","stupid","shut","wtf","dumb"}
@@ -85,27 +85,27 @@ MODIFIER_PHRASE = {
     ("humorous","flirty"): "through playful flirtation",
     ("supportive","flirty"): "with warm, gentle flirtation",
     ("dominant","flirty"): "with confident flirtation",
+
     ("curious","sexual"): "with adult curiosity",
-    ("supportive","sexual"): "with emotional intimacy",
-    ("dominant","sexual"): "with bold adult energy",
+    ("supportive","sexual"): "with emotional intimacy and adult undertones",
+    ("dominant","sexual"): "with bold, adult energy",
     ("humorous","sexual"): "using shock humor",
+
     ("humorous","curse"): "with crude humor",
     ("dominant","curse"): "in a forceful, unfiltered way",
     ("supportive","curse"): "in a familiar, casual tone",
 }
 
 # =================================================
-# SL CHAT SAFE VISUAL HELPERS
+# VISUAL HELPERS (SL CHAT SAFE)
 # =================================================
-
-SEP = "===================="
 
 def bar(v, width=5):
     filled = int(round((v / 100) * width))
-    return "#" * filled + "-" * (width - filled)
+    return "█" * filled + "▒" * (width - filled)
 
-def row(label, value):
-    return f"{label:<11} {bar(value)} {value:>3}%"
+def row(icon, label, value):
+    return f"{icon} {label:<11} {bar(value)} {value:>3}%"
 
 # =================================================
 # HELPERS
@@ -141,6 +141,10 @@ def extract_hits(text):
 
     return hits
 
+def single_trait_warning(traits):
+    strong = [k for k,v in traits.items() if v >= 0.10]
+    return len(strong) <= 1
+
 # =================================================
 # DATA FETCH
 # =================================================
@@ -164,9 +168,6 @@ def fetch_rows():
 # =================================================
 
 def build_summary(conf, traits, styles):
-    if conf < 0.25:
-        return "Barely spoke. Vibes pending."
-
     ranked = sorted(traits.items(), key=lambda x: x[1], reverse=True)
     top = [k for k,v in ranked if v > 0][:3]
 
@@ -233,56 +234,52 @@ def build_profiles():
     for p in profiles.values():
         m = max(p["messages"],1)
         confidence = min(1.0, math.log(m + 1) / 4)
+        damp = max(0.05, confidence ** 1.5)
 
-        traits = {k:int(min((p["raw_traits"][k]/m),1.0)*100) for k in TRAIT_WEIGHTS}
-        styles = {k:int(min((p["raw_styles"][k]/m),1.0)*100) for k in STYLE_WEIGHTS}
+        traits = {k: min((p["raw_traits"][k]/m)*damp,1.0) for k in TRAIT_WEIGHTS}
+        styles = {k: min((p["raw_styles"][k]/(m*0.3))*damp,1.0) for k in STYLE_WEIGHTS}
 
-        risk = int(min((traits["combative"] + styles["curse"]) * 0.5, 100))
-        club = int(min((traits["dominant"] + styles["sexual"]) * 0.5, 100))
-        hangout = int(min((traits["supportive"] + traits["curious"]) * 0.5, 100))
+        forming = confidence < 0.25 or single_trait_warning(traits)
+
+        summary = (
+            "Profile forming — limited signal. Traits may shift with more interaction."
+            if forming else build_summary(confidence, traits, styles)
+        )
 
         badges = []
-        if traits["humorous"] > 55: badges.append("Comedy MVP")
-        if traits["supportive"] > 50: badges.append("Comfort Avatar")
-        if confidence > 0.75: badges.append("High Signal")
+        if forming: badges.append("🧩 Profile Forming")
+        if traits["humorous"] > 0.55: badges.append("🎭 Comedy MVP")
+        if traits["supportive"] > 0.5: badges.append("💖 Safe Space")
 
         pretty_text = (
-            f"{SEP}\n"
-            "SOCIAL PROFILE\n"
-            f"{SEP}\n"
-            f"Avatar: {p['name']}\n"
-            f"Vibe: {'Active' if p['recent'] > 3 else 'Just Vibing'}\n"
-            f"Confidence: {bar(int(confidence*100))} {int(confidence*100)}%\n\n"
-
-            "PERSONALITY\n"
-            + row("Engaging", traits["engaging"]) + "\n"
-            + row("Curious", traits["curious"]) + "\n"
-            + row("Humorous", traits["humorous"]) + "\n"
-            + row("Supportive", traits["supportive"]) + "\n"
-            + row("Dominant", traits["dominant"]) + "\n"
-            + row("Combative", traits["combative"]) + "\n\n"
-
-            "STYLE\n"
-            + row("Flirty", styles["flirty"]) + "\n"
-            + row("Sexual", styles["sexual"]) + "\n"
-            + row("Curse", styles["curse"]) + "\n\n"
-
-            "ENERGY\n"
-            + row("Hangout", hangout) + "\n"
-            + row("Club", club) + "\n"
-            + row("Risk", risk) + "\n\n"
-
-            "BADGES\n"
-            + (", ".join(badges) if badges else "None") + "\n\n"
-
-            "Summary\n"
-            + build_summary(confidence, traits, styles) + "\n"
-            f"{SEP}"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🧠 SOCIAL PROFILE\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 Avatar: {p['name']}\n"
+            f"🔥 Vibe: {'Active' if p['recent'] > 3 else 'Just Vibing'}\n"
+            f"📊 Confidence: {bar(int(confidence*100))} {int(confidence*100)}%\n"
+            + ("\n⚠ Profile forming — limited signal\n" if forming else "\n") +
+            "🧩 PERSONALITY\n"
+            + row("💬","Engaging", int(traits["engaging"]*100)) + "\n"
+            + row("🧠","Curious", int(traits["curious"]*100)) + "\n"
+            + row("😂","Humorous", int(traits["humorous"]*100)) + "\n"
+            + row("🤍","Supportive", int(traits["supportive"]*100)) + "\n"
+            + row("👑","Dominant", int(traits["dominant"]*100)) + "\n"
+            + row("⚔","Combative", int(traits["combative"]*100)) + "\n\n"
+            "📝 Summary\n" + summary + "\n"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
 
         out.append({
             "avatar_uuid": p["avatar_uuid"],
             "name": p["name"],
+            "confidence": int(confidence * 100),
+            "forming": forming,
+            "disclaimer": summary if forming else "",
+            "traits": {k:int(v*100) for k,v in traits.items()},
+            "styles": {k:int(v*100) for k,v in styles.items()},
+            "badges": badges,
+            "summary": summary,
             "pretty_text": pretty_text
         })
 
@@ -291,13 +288,12 @@ def build_profiles():
     return out
 
 # =================================================
-# HUD ENDPOINTS
+# HUD ENDPOINTS (SL)
 # =================================================
 
 @app.route("/profile/self", methods=["POST"])
 def profile_self():
-    data = request.get_json(silent=True) or {}
-    uuid = data.get("uuid")
+    uuid = (request.get_json(silent=True) or {}).get("uuid")
     for p in build_profiles():
         if p["avatar_uuid"] == uuid:
             return jsonify(p)
@@ -310,6 +306,14 @@ def profile_by_uuid(uuid):
             return jsonify(p)
     return jsonify({"error": "profile not found"}), 404
 
+@app.route("/profiles/available", methods=["POST"])
+def profiles_available():
+    uuids = set((request.get_json(silent=True) or {}).get("uuids", []))
+    return jsonify([
+        {"name": p["name"], "uuid": p["avatar_uuid"]}
+        for p in build_profiles()
+        if p["avatar_uuid"] in uuids
+    ])
 
 # =================================================
 # WEBSITE ENDPOINT
