@@ -273,6 +273,36 @@ def profile_nearby():
     profiles = build_profiles()
     return jsonify(profiles[0]) if profiles else jsonify({})
 
+@app.route("/profiles/available", methods=["POST"])
+def profiles_available():
+    data = request.get_json(silent=True) or {}
+    uuids = set(data.get("uuids", []))
+
+    results = []
+    for p in build_profiles():
+        if p["avatar_uuid"] in uuids:
+            results.append({
+                "name": p["name"],
+                "uuid": p["avatar_uuid"]
+            })
+
+    return jsonify(results)
+
+@app.route("/profile/uuid", methods=["POST"])
+def profile_by_uuid():
+    data = request.get_json(silent=True) or {}
+    uuid = data.get("uuid")
+
+    if not uuid:
+        return jsonify({"error": "missing uuid"}), 400
+
+    for p in build_profiles():
+        if p["avatar_uuid"] == uuid:
+            return jsonify(p)
+
+    return jsonify({"error": "profile not found"}), 404
+
+
 # =================================================
 # WEBSITE ENDPOINT
 # =================================================
