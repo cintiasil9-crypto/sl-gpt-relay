@@ -534,6 +534,8 @@ def build_match_pretty(source, similar, complement, hybrid):
         "⚖️ Hybrid builds long-term flow\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
+    
+build_best_match_pretty = build_match_pretty
 
 # =================================================
 # ROOM VIBE ENDPOINT (SL-SAFE, PROFILE-STYLE)
