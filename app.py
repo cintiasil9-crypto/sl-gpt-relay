@@ -317,20 +317,6 @@ def build_profiles():
             for k in STYLE_WEIGHTS
         }
 
-
-        out.append({
-            "avatar_uuid": p["avatar_uuid"],
-            "name": p["name"],
-            "confidence": int(confidence*100),
-            "traits": traits,
-            "styles": styles,
-            "recent": p["recent"]
-        })
-
-    CACHE["profiles"] = out
-    CACHE["ts"] = time.time()
-    return out
-
 # =================================================
 # PRESENTERS (FULL vs LITE)
 # =================================================
