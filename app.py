@@ -117,15 +117,6 @@ NEGATORS = {
 }
 
 # =================================================
-# LITE SAFE WORDS
-# =================================================
-
-LITE_ROOM = ["Social","Quiet","Active","Calm","Mixed","Playful"]
-LITE_PERSON = ["engaged","responsive","observant","reserved"]
-LITE_NEARBY = ["Calm","Playful","Quiet","Active","Observant"]
-LITE_TONES = ["Playful","Neutral","Calm","Mixed"]
-
-# =================================================
 # SUMMARY PHRASES (UNCHANGED)
 # =================================================
 
@@ -345,8 +336,12 @@ def build_profiles():
 # =================================================
 
 def present_profile(p, mode):
+    if not p:
+        return "👤 You:\nNo data yet."
+
     if mode == "LITE":
-        return f"👤 You:\nComing across as engaged and responsive."
+        return "👤 You:\nComing across as engaged and responsive."
+
     return json.dumps(p, indent=2)
 
 def present_nearby(profiles, mode):
@@ -358,6 +353,7 @@ def present_nearby(profiles, mode):
         else:
             lines.append(f"• {p['name']} ({p['confidence']}%)")
     return "\n".join(lines)
+
 
 
 # =================================================
@@ -756,8 +752,8 @@ def leaderboard():
 def hud_scan():
     data = request.get_json(silent=True) or {}
     mode = data.get("mode","FULL")
-
     uuid = data.get("uuid")
+
     profiles = build_profiles()
     me = next((p for p in profiles if p["avatar_uuid"] == uuid), None)
     nearby = [p for p in profiles if p["avatar_uuid"] != uuid]
@@ -770,8 +766,10 @@ def hud_scan():
     if mode == "LITE":
         text += "\n\nℹ️ Detail improves as more residents participate."
 
-    return Response(json.dumps({"text": text}, ensure_ascii=False),
-                    mimetype="application/json; charset=utf-8")
+    return Response(
+        json.dumps({"text": text}, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
 
 @app.route("/room/vibe", methods=["POST"])
 def room_vibe():
@@ -782,8 +780,10 @@ def room_vibe():
     profiles = [p for p in build_profiles() if p["avatar_uuid"] in uuids]
     text = build_room_vibe(profiles, mode)
 
-    return Response(json.dumps({"pretty_text": text}, ensure_ascii=False),
-                    mimetype="application/json; charset=utf-8")
+    return Response(
+        json.dumps({"pretty_text": text}, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
 
 @app.route("/")
 def ok():
