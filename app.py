@@ -438,6 +438,102 @@ def build_room_vibe_enhanced(profiles):
     }
 
     return pretty, html
+    
+# =================================================
+# MATCHING ADD-ONS (NEW, NON-DESTRUCTIVE)
+# =================================================
+
+MATCH_ICONS = {
+    "similar": "🧬",
+    "complement": "🔀",
+    "hybrid": "⚖️"
+}
+
+def similarity_score(a, b):
+    """How alike two avatars are (distance-based)."""
+    dist = 0.0
+    for k in a["traits"]:
+        dist += (a["traits"][k] - b["traits"][k]) ** 2
+    return max(0, 100 - math.sqrt(dist))
+
+
+def complement_score(a, b):
+    """How well two avatars balance each other."""
+    score = 0.0
+
+    score += min(a["traits"]["dominant"],   b["traits"]["supportive"])
+    score += min(b["traits"]["dominant"],   a["traits"]["supportive"])
+
+    score += min(a["traits"]["curious"],    b["traits"]["engaging"])
+    score += min(b["traits"]["curious"],    a["traits"]["engaging"])
+
+    score += min(a["styles"]["flirty"],     b["styles"]["flirty"])
+    score += min(a["styles"]["sexual"],     b["styles"]["sexual"])
+
+    score -= abs(a["traits"]["combative"] - b["traits"]["combative"])
+
+    return max(0, min(score, 100))
+
+
+def hybrid_score(similar, complement):
+    """Balanced mix of similarity and complement."""
+    return (0.6 * similar) + (0.4 * complement)
+
+
+def find_best_matches(source, profiles):
+    """
+    Returns one avatar per category:
+    similar, complementary, hybrid
+    """
+    best_similar = (None, -1)
+    best_complement = (None, -1)
+    best_hybrid = (None, -1)
+
+    for p in profiles:
+        if p["avatar_uuid"] == source["avatar_uuid"]:
+            continue
+
+        sim = similarity_score(source, p)
+        comp = complement_score(source, p)
+        hyb = hybrid_score(sim, comp)
+
+        if sim > best_similar[1]:
+            best_similar = (p, sim)
+
+        if comp > best_complement[1]:
+            best_complement = (p, comp)
+
+        if hyb > best_hybrid[1]:
+            best_hybrid = (p, hyb)
+
+    return best_similar[0], best_complement[0], best_hybrid[0]
+
+
+def build_match_pretty(source, similar, complement, hybrid):
+    """
+    SL-safe pretty display, mirrors ROOM VIBE + PROFILE style
+    """
+    return (
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💞 BEST MATCHES\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 You: {source['name']}\n\n"
+
+        f"{MATCH_ICONS['similar']} Similar Energy\n"
+        f"   {similar['name'] if similar else 'No strong match yet'}\n\n"
+
+        f"{MATCH_ICONS['complement']} Complementary Energy\n"
+        f"   {complement['name'] if complement else 'No strong match yet'}\n\n"
+
+        f"{MATCH_ICONS['hybrid']} Hybrid Balance\n"
+        f"   {hybrid['name'] if hybrid else 'No strong match yet'}\n\n"
+
+        "🌙 Tip\n"
+        "🧬 Similar feels natural\n"
+        "🔀 Complement sparks growth\n"
+        "⚖️ Hybrid builds long-term flow\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
 
 # =================================================
 # ROOM VIBE ENDPOINT (SL-SAFE, PROFILE-STYLE)
@@ -458,6 +554,35 @@ def room_vibe():
     return Response(
         json.dumps({
             "pretty_text": pretty   # ← ONLY thing SL needs
+        }, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
+
+@app.route("/match/best", methods=["POST"])
+def best_match():
+    data = request.get_json(silent=True) or {}
+    uuid = data.get("uuid")
+
+    profiles = build_profiles()
+    source = next((p for p in profiles if p["avatar_uuid"] == uuid), None)
+
+    if not source:
+        return jsonify({"error": "profile not found"}), 404
+
+    similar, complement, hybrid = find_best_matches(source, profiles)
+
+    pretty = build_best_match_pretty(
+        source,
+        similar,
+        complement,
+        hybrid
+    )
+
+    # 🔑 SL-SAFE RESPONSE (THIS IS WHY IT WORKS)
+    return Response(
+        json.dumps({
+            "text": pretty,        # Script C reads this
+            "pretty_text": pretty  # kept for consistency
         }, ensure_ascii=False),
         mimetype="application/json; charset=utf-8"
     )
