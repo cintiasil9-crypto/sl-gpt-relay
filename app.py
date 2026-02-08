@@ -317,58 +317,15 @@ def build_profiles():
             for k in STYLE_WEIGHTS
         }
 
+        # ---------------- ENERGY METRICS (RESTORED) ----------------
         risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
         club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
         hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
+
         vibe = "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨"
 
-# =================================================
-# PRESENTERS (FULL vs LITE)
-# =================================================
-
-def present_profile(p, mode):
-    if not p:
-        return "👤 You:\nNo data yet."
-
-    if mode == "LITE":
-        return "👤 You:\nComing across as engaged and responsive."
-
-    return json.dumps(p, indent=2)
-
-def present_nearby(profiles, mode):
-    lines = ["👥 Nearby:"]
-    for p in profiles[:6]:
-        if mode == "LITE":
-            label = "Active" if p["recent"] > 0 else "Quiet"
-            lines.append(f"• {p['name']} — {label}")
-        else:
-            lines.append(f"• {p['name']} ({p['confidence']}%)")
-    return "\n".join(lines)
-
-
-
-# =================================================
-# ROOM VIBE (ONLY HERE)
-# =================================================
-
-def build_room_vibe(profiles, mode):
-    total_recent = sum(p["recent"] for p in profiles)
-    vibe = "Active" if total_recent >= 6 else "Quiet"
-
-    if mode == "LITE":
-        return f"🧠 Room Vibe:\n{vibe}"
-
-    return (
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🧠 ROOM VIBE\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"💬 Activity: {vibe}\n"
-        "━━━━━━━━━━━━━━━━━━━━"
-    )
-
         # ---------------- PRETTY PROFILE TEXT ----------------
-       def build_pretty_profile(p):
-    pretty_text = (
+        pretty_text = (
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🧠 SOCIAL PROFILE\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -548,8 +505,7 @@ def build_room_vibe_enhanced(profiles):
     }
 
     return pretty, html
-
-
+    
 # =================================================
 # MATCHING ADD-ONS (NEW, NON-DESTRUCTIVE)
 # =================================================
@@ -732,46 +688,6 @@ def profiles_available():
 @app.route("/leaderboard")
 def leaderboard():
     return Response(json.dumps(build_profiles()), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
-
-@app.route("/hud/scan", methods=["POST"])
-def hud_scan():
-    data = request.get_json(silent=True) or {}
-    mode = data.get("mode","FULL")
-    uuid = data.get("uuid")
-
-    profiles = build_profiles()
-    me = next((p for p in profiles if p["avatar_uuid"] == uuid), None)
-    nearby = [p for p in profiles if p["avatar_uuid"] != uuid]
-
-    room = build_room_vibe(nearby + ([me] if me else []), mode)
-
-text = "\n\n".join([
-    room,
-    present_profile(me, mode),
-    present_nearby(nearby, mode)
-])
-
-    if mode == "LITE":
-        text += "\n\nℹ️ Detail improves as more residents participate."
-
-    return Response(
-        json.dumps({"text": text}, ensure_ascii=False),
-        mimetype="application/json; charset=utf-8"
-    )
-
-@app.route("/room/vibe", methods=["POST"])
-def room_vibe():
-    data = request.get_json(silent=True) or {}
-    mode = data.get("mode","FULL")
-    uuids = set(data.get("uuids",[]))
-
-    profiles = [p for p in build_profiles() if p["avatar_uuid"] in uuids]
-    text = build_room_vibe(profiles, mode)
-
-    return Response(
-        json.dumps({"pretty_text": text}, ensure_ascii=False),
-        mimetype="application/json; charset=utf-8"
-    )
 
 @app.route("/")
 def ok():
