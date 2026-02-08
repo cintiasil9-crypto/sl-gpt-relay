@@ -13,13 +13,6 @@ CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
 NOW = time.time()
 
-# =====================================
-# HUD MODE CONFIG
-# =====================================
-
-HUD_MODE = "LITE"   # "LITE" or "FULL"
-
-UPDATE_INTERVAL = 120 if HUD_MODE == "LITE" else 40
 # =================================================
 # WEIGHTS
 # =================================================
@@ -124,6 +117,15 @@ NEGATORS = {
 }
 
 # =================================================
+# LITE SAFE WORDS
+# =================================================
+
+LITE_ROOM = ["Social","Quiet","Active","Calm","Mixed","Playful"]
+LITE_PERSON = ["engaged","responsive","observant","reserved"]
+LITE_NEARBY = ["Calm","Playful","Quiet","Active","Observant"]
+LITE_TONES = ["Playful","Neutral","Calm","Mixed"]
+
+# =================================================
 # SUMMARY PHRASES (UNCHANGED)
 # =================================================
 
@@ -167,28 +169,6 @@ MODIFIER_PHRASE = {
     ("dominant","curse"): "in a forceful, unfiltered way",
     ("supportive","curse"): "in a familiar, casual tone",
 }
-
-# =================================================
-# SAFE WORD SETS (LOCKED FOR LITE)
-# =================================================
-
-LITE_ROOM_WORDS = [
-    "Social","Quiet","Active","Calm","Mixed","Focused",
-    "Playful","Neutral","Expressive","Low Energy","High Energy"
-]
-
-LITE_PERSON_WORDS = [
-    "engaged","responsive","adaptive","observant",
-    "present","expressive","reserved","neutral"
-]
-
-LITE_NEARBY_WORDS = [
-    "Calm","Playful","Quiet","Active",
-    "Observant","Expressive","Reserved","Neutral"
-]
-
-LITE_TONES = ["Playful","Neutral","Serious","Calm","Mixed"]
-
 
 # =================================================
 # VISUAL HELPERS (SL CHAT SAFE)
@@ -345,6 +325,59 @@ def build_profiles():
             k: min((p["raw_styles"][k] / (m * 0.3)) * damp, 1.0)
             for k in STYLE_WEIGHTS
         }
+
+
+        out.append({
+            "avatar_uuid": p["avatar_uuid"],
+            "name": p["name"],
+            "confidence": int(confidence*100),
+            "traits": traits,
+            "styles": styles,
+            "recent": p["recent"]
+        })
+
+    CACHE["profiles"] = out
+    CACHE["ts"] = time.time()
+    return out
+
+# =================================================
+# PRESENTERS (FULL vs LITE)
+# =================================================
+
+def present_profile(p, mode):
+    if mode == "LITE":
+        return f"👤 You:\nComing across as engaged and responsive."
+    return json.dumps(p, indent=2)
+
+def present_nearby(profiles, mode):
+    lines = ["👥 Nearby:"]
+    for p in profiles[:6]:
+        if mode == "LITE":
+            label = "Active" if p["recent"] > 0 else "Quiet"
+            lines.append(f"• {p['name']} — {label}")
+        else:
+            lines.append(f"• {p['name']} ({p['confidence']}%)")
+    return "\n".join(lines)
+
+
+# =================================================
+# ROOM VIBE (ONLY HERE)
+# =================================================
+
+def build_room_vibe(profiles, mode):
+    total_recent = sum(p["recent"] for p in profiles)
+    vibe = "Active" if total_recent >= 6 else "Quiet"
+
+    if mode == "LITE":
+        return f"🧠 Room Vibe:\n{vibe}"
+
+    return (
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🧠 ROOM VIBE\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"💬 Activity: {vibe}\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
 
         # ---------------- ENERGY METRICS (RESTORED) ----------------
         risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
@@ -535,85 +568,6 @@ def build_room_vibe_enhanced(profiles):
 
     return pretty, html
 
-def build_room_vibe(vibe_data):
-    if HUD_MODE == "LITE":
-        tags = vibe_data.get("tags", [])[:3]
-        safe = [t for t in tags if t in LITE_ROOM_WORDS]
-        return f"🧠 Room Vibe:\n{' • '.join(safe)}"
-
-    # FULL
-    return (
-        "🧠 Room Vibe:\n"
-        f"{vibe_data.get('summary','')}\n"
-        f"{vibe_data.get('detail','')}"
-    )
-
-def build_personal_snapshot(personal_data):
-    if HUD_MODE == "LITE":
-        adj = next(
-            (w for w in personal_data.get("adjectives", [])
-             if w in LITE_PERSON_WORDS),
-            "engaged"
-        )
-        return f"👤 You:\nComing across as {adj} and responsive."
-
-    # FULL
-    return (
-        "👤 You:\n"
-        f"{personal_data.get('summary','')}\n"
-        f"{personal_data.get('detail','')}"
-    )
-
-def build_chat_activity(chat_data):
-    if HUD_MODE == "LITE":
-        activity = "High" if chat_data.get("rate",0) > 0.6 else "Low"
-        tone = chat_data.get("tone","Neutral")
-        tone = tone if tone in LITE_TONES else "Mixed"
-
-        return (
-            f"💬 Chat Activity: {activity}\n"
-            f"🎭 Tone: {tone}"
-        )
-
-    # FULL
-    return (
-        "💬 Chat Activity:\n"
-        f"{chat_data.get('summary','')}\n"
-        f"{chat_data.get('detail','')}"
-    )
-
-def build_nearby(nearby_list):
-    lines = ["👥 Nearby:"]
-
-    for av in nearby_list[:6]:
-        name = av.get("name","Unknown")
-
-        if HUD_MODE == "LITE":
-            label = next(
-                (w for w in av.get("energy_tags",[])
-                 if w in LITE_NEARBY_WORDS),
-                "Neutral"
-            )
-            lines.append(f"• {name} — {label}")
-
-        else:
-            lines.append(f"• {name}")
-            lines.append(f"  {av.get('full_traits','')}")
-
-    return "\n".join(lines)
-
-def build_hud_response(data):
-    blocks = [
-        build_room_vibe(data["room"]),
-        build_personal_snapshot(data["personal"]),
-        build_chat_activity(data["chat"]),
-        build_nearby(data["nearby"])
-    ]
-
-    if HUD_MODE == "LITE":
-        blocks.append("ℹ️ Detail improves as more residents participate.")
-
-    return "\n\n".join(blocks)
 
 # =================================================
 # MATCHING ADD-ONS (NEW, NON-DESTRUCTIVE)
@@ -801,14 +755,35 @@ def leaderboard():
 @app.route("/hud/scan", methods=["POST"])
 def hud_scan():
     data = request.get_json(silent=True) or {}
+    mode = data.get("mode","FULL")
 
-    output = build_hud_response(data)
+    uuid = data.get("uuid")
+    profiles = build_profiles()
+    me = next((p for p in profiles if p["avatar_uuid"] == uuid), None)
+    nearby = [p for p in profiles if p["avatar_uuid"] != uuid]
 
-    return Response(
-        json.dumps({"text": output}, ensure_ascii=False),
-        mimetype="application/json; charset=utf-8"
-    )
+    text = "\n\n".join([
+        present_profile(me, mode),
+        present_nearby(nearby, mode)
+    ])
 
+    if mode == "LITE":
+        text += "\n\nℹ️ Detail improves as more residents participate."
+
+    return Response(json.dumps({"text": text}, ensure_ascii=False),
+                    mimetype="application/json; charset=utf-8")
+
+@app.route("/room/vibe", methods=["POST"])
+def room_vibe():
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode","FULL")
+    uuids = set(data.get("uuids",[]))
+
+    profiles = [p for p in build_profiles() if p["avatar_uuid"] in uuids]
+    text = build_room_vibe(profiles, mode)
+
+    return Response(json.dumps({"pretty_text": text}, ensure_ascii=False),
+                    mimetype="application/json; charset=utf-8")
 
 @app.route("/")
 def ok():
