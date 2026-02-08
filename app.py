@@ -367,7 +367,8 @@ def build_room_vibe(profiles, mode):
     )
 
         # ---------------- PRETTY PROFILE TEXT ----------------
-        pretty_text = (
+       def build_pretty_profile(p):
+    pretty_text = (
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🧠 SOCIAL PROFILE\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
