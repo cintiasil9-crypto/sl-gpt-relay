@@ -32,22 +32,89 @@ STYLE_WEIGHTS = {
     "curse":  0.9
 }
 
-# =================================================
-# KEYWORDS
-# =================================================
+# ======================================
+# SOCIAL TRAIT KEYWORDS — SLANG EXPANDED
+# ======================================
 
-ENGAGING = {"hi","hey","yo","sup","wb","welcome"}
-CURIOUS = {"why","how","what","where","when","who"}
-HUMOR = {"lol","lmao","haha","rofl","😂","🤣"}
-SUPPORT = {"sorry","hope","ok","there","np","hug","hugs","here"}
-DOMINANT = {"listen","look","stop","wait","now"}
-COMBATIVE = {"idiot","stupid","shut","wtf","dumb"}
+ENGAGING = {
+    "hi","hey","heya","hiya","yo","sup","wb","welcome",
+    "hello","ello","hai","haiii","hii","hiii",
+    "o/","\\o","wave","waves","*waves*","*wave*",
+    "heyhey","yo yo","sup all","hiya all"
+}
 
-FLIRTY = {"cute","hot","handsome","beautiful","kiss","xoxo","flirt"}
-SEXUAL = {"sex","fuck","horny","wet","hard","naked"}
-CURSE = {"fuck","shit","damn","bitch","asshole"}
+CURIOUS = {
+    "why","how","what","where","when","who",
+    "anyone","anybody","any1","any1?",
+    "curious","wonder","wondering",
+    "?","??","???","????",
+    "huh","eh","hm","hmm","hmmm"
+}
 
-NEGATORS = {"not","no","never","dont","can't","isn't"}
+HUMOR = {
+    "lol","lmao","lmfao","rofl","roflmao",
+    "haha","hehe","heh","bahaha",
+    "😂","🤣","😆","😜","😹","💀","😭",
+    "lawl","lul","lel","ded","im dead","dead 💀"
+}
+
+SUPPORT = {
+    "sorry","sry","srry","soz",
+    "hope","ok","okay","k","kk","mk",
+    "there","here","np","nps","no worries",
+    "hug","hugs","hugz","*hug*","*hugs*",
+    "<3","❤️","💜","💙","💖",
+    "u ok","you ok","all good","its ok","it's ok"
+}
+
+DOMINANT = {
+    "listen","look","stop","wait","now",
+    "do it","dont","don't","come here","stay",
+    "pay attention","focus","enough",
+    "move","sit","stand","follow","watch","hold up"
+}
+
+COMBATIVE = {
+    "idiot","stupid","dumb","moron","retard",
+    "shut","shut up","stfu","gtfo","wtf","tf",
+    "screw you","fuck off",
+    "trash","garbage","bs","bullshit","smh",
+}
+
+# ======================================
+# STYLE / TONE — SLANG EXPANDED
+# ======================================
+
+FLIRTY = {
+    "cute","cutie","qt","hot","handsome","beautiful","pretty",
+    "sexy","kiss","kisses","xoxo","mwah","😘","😍","😉","😏",
+    "flirt","tease","teasing",
+    "hey you","hey sexy","hey cutie","damn u cute","babe","baby","sweety"
+}
+
+SEXUAL = {
+    "sex","fuck","fucking","horny","wet","hard","naked",
+    "dick","cock","pussy","boobs","tits","ass","booty",
+    "cum","cumming","breed","breedable",
+    "thrust","ride","mount","spread","bed","moan","mm","mmm"
+}
+
+CURSE = {
+    "fuck","fucking","shit","damn","bitch","asshole",
+    "crap","hell","pissed","wtf","ffs","af","asf",
+    "omfg","holy shit"
+}
+
+# ======================================
+# NEGATORS / REVERSALS — SL STYLE
+# ======================================
+
+NEGATORS = {
+    "not","no","never","dont","don't","cant","can't",
+    "isnt","isn't","wasnt","wasn't",
+    "aint","ain't","nah","nope","naw",
+    "idk","idc","dont care","doesnt matter"
+}
 
 # =================================================
 # SUMMARY PHRASES (UNCHANGED)
