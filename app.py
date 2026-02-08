@@ -758,10 +758,13 @@ def hud_scan():
     me = next((p for p in profiles if p["avatar_uuid"] == uuid), None)
     nearby = [p for p in profiles if p["avatar_uuid"] != uuid]
 
-    text = "\n\n".join([
-        present_profile(me, mode),
-        present_nearby(nearby, mode)
-    ])
+    room = build_room_vibe(nearby + ([me] if me else []), mode)
+
+text = "\n\n".join([
+    room,
+    present_profile(me, mode),
+    present_nearby(nearby, mode)
+])
 
     if mode == "LITE":
         text += "\n\nℹ️ Detail improves as more residents participate."
