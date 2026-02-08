@@ -317,6 +317,11 @@ def build_profiles():
             for k in STYLE_WEIGHTS
         }
 
+        risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
+        club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
+        hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
+        vibe = "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨"
+
 # =================================================
 # PRESENTERS (FULL vs LITE)
 # =================================================
@@ -360,13 +365,6 @@ def build_room_vibe(profiles, mode):
         f"💬 Activity: {vibe}\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
-
-        # ---------------- ENERGY METRICS (RESTORED) ----------------
-        risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
-        club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
-        hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
-
-        vibe = "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨"
 
         # ---------------- PRETTY PROFILE TEXT ----------------
         pretty_text = (
