@@ -13,6 +13,13 @@ CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
 NOW = time.time()
 
+# =====================================
+# HUD MODE CONFIG
+# =====================================
+
+HUD_MODE = "LITE"   # "LITE" or "FULL"
+
+UPDATE_INTERVAL = 120 if HUD_MODE == "LITE" else 40
 # =================================================
 # WEIGHTS
 # =================================================
@@ -160,6 +167,28 @@ MODIFIER_PHRASE = {
     ("dominant","curse"): "in a forceful, unfiltered way",
     ("supportive","curse"): "in a familiar, casual tone",
 }
+
+# =================================================
+# SAFE WORD SETS (LOCKED FOR LITE)
+# =================================================
+
+LITE_ROOM_WORDS = [
+    "Social","Quiet","Active","Calm","Mixed","Focused",
+    "Playful","Neutral","Expressive","Low Energy","High Energy"
+]
+
+LITE_PERSON_WORDS = [
+    "engaged","responsive","adaptive","observant",
+    "present","expressive","reserved","neutral"
+]
+
+LITE_NEARBY_WORDS = [
+    "Calm","Playful","Quiet","Active",
+    "Observant","Expressive","Reserved","Neutral"
+]
+
+LITE_TONES = ["Playful","Neutral","Serious","Calm","Mixed"]
+
 
 # =================================================
 # VISUAL HELPERS (SL CHAT SAFE)
@@ -505,7 +534,87 @@ def build_room_vibe_enhanced(profiles):
     }
 
     return pretty, html
-    
+
+def build_room_vibe(vibe_data):
+    if HUD_MODE == "LITE":
+        tags = vibe_data.get("tags", [])[:3]
+        safe = [t for t in tags if t in LITE_ROOM_WORDS]
+        return f"🧠 Room Vibe:\n{' • '.join(safe)}"
+
+    # FULL
+    return (
+        "🧠 Room Vibe:\n"
+        f"{vibe_data.get('summary','')}\n"
+        f"{vibe_data.get('detail','')}"
+    )
+
+def build_personal_snapshot(personal_data):
+    if HUD_MODE == "LITE":
+        adj = next(
+            (w for w in personal_data.get("adjectives", [])
+             if w in LITE_PERSON_WORDS),
+            "engaged"
+        )
+        return f"👤 You:\nComing across as {adj} and responsive."
+
+    # FULL
+    return (
+        "👤 You:\n"
+        f"{personal_data.get('summary','')}\n"
+        f"{personal_data.get('detail','')}"
+    )
+
+def build_chat_activity(chat_data):
+    if HUD_MODE == "LITE":
+        activity = "High" if chat_data.get("rate",0) > 0.6 else "Low"
+        tone = chat_data.get("tone","Neutral")
+        tone = tone if tone in LITE_TONES else "Mixed"
+
+        return (
+            f"💬 Chat Activity: {activity}\n"
+            f"🎭 Tone: {tone}"
+        )
+
+    # FULL
+    return (
+        "💬 Chat Activity:\n"
+        f"{chat_data.get('summary','')}\n"
+        f"{chat_data.get('detail','')}"
+    )
+
+def build_nearby(nearby_list):
+    lines = ["👥 Nearby:"]
+
+    for av in nearby_list[:6]:
+        name = av.get("name","Unknown")
+
+        if HUD_MODE == "LITE":
+            label = next(
+                (w for w in av.get("energy_tags",[])
+                 if w in LITE_NEARBY_WORDS),
+                "Neutral"
+            )
+            lines.append(f"• {name} — {label}")
+
+        else:
+            lines.append(f"• {name}")
+            lines.append(f"  {av.get('full_traits','')}")
+
+    return "\n".join(lines)
+
+def build_hud_response(data):
+    blocks = [
+        build_room_vibe(data["room"]),
+        build_personal_snapshot(data["personal"]),
+        build_chat_activity(data["chat"]),
+        build_nearby(data["nearby"])
+    ]
+
+    if HUD_MODE == "LITE":
+        blocks.append("ℹ️ Detail improves as more residents participate.")
+
+    return "\n\n".join(blocks)
+
 # =================================================
 # MATCHING ADD-ONS (NEW, NON-DESTRUCTIVE)
 # =================================================
@@ -688,6 +797,18 @@ def profiles_available():
 @app.route("/leaderboard")
 def leaderboard():
     return Response(json.dumps(build_profiles()), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
+
+@app.route("/hud/scan", methods=["POST"])
+def hud_scan():
+    data = request.get_json(silent=True) or {}
+
+    output = build_hud_response(data)
+
+    return Response(
+        json.dumps({"text": output}, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8"
+    )
+
 
 @app.route("/")
 def ok():
