@@ -11,7 +11,6 @@ GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
 
 CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
-NOW = time.time()
 
 # =================================================
 # WEIGHTS
@@ -605,6 +604,155 @@ def build_match_pretty(source, similar, complement, hybrid):
 build_best_match_pretty = build_match_pretty
 
 # =================================================
+# LEADERBOARD ENGINE (NEW, NON-DESTRUCTIVE)
+# =================================================
+
+def leaderboard_effective_score(p, raw_value):
+    """
+    Confidence-weighted + activity-weighted ranking.
+    Prevents low-confidence spam from ranking high.
+    """
+    confidence_weight = p["confidence"] / 100
+    activity_bonus = p["recent"] * 2
+    return (raw_value * confidence_weight) + activity_bonus
+
+
+def lb_bar(v, width=8):
+    if v <= 0:
+        return "▒" * width
+    filled = max(1, int(round((v / 100) * width)))
+    return "█" * filled + "▒" * (width - filled)
+
+
+def rank_top3(profiles, key_fn):
+    ranked = sorted(
+        profiles,
+        key=lambda p: leaderboard_effective_score(p, key_fn(p)),
+        reverse=True
+    )
+    return ranked[:3]
+
+
+def lb_block(title, icon, ranked, key_fn):
+    text = f"{icon} {title}\n"
+    for i, p in enumerate(ranked):
+        raw = key_fn(p)
+        text += (
+            f"{i+1}-{p['name']} "
+            f"{lb_bar(raw)} "
+            f"{raw}%\n"
+        )
+    return text + "\n"
+
+
+def build_leaderboard_pretty(profiles):
+
+    if not profiles:
+        return "No leaderboard data available."
+
+    pretty = "━━━━━━━━━━━━━━━━━━━━\n"
+    pretty += "🧠 LEADERBOARD\n"
+    pretty += "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    # PERSONALITY
+    pretty += "PERSONALITY\n\n"
+
+    pretty += lb_block(
+        "Confidence",
+        "📊",
+        sorted(profiles, key=lambda p: p["confidence"], reverse=True)[:3],
+        lambda p: p["confidence"]
+    )
+
+    pretty += lb_block(
+        "Engaging",
+        "💬",
+        rank_top3(profiles, lambda p: p["traits"]["engaging"]),
+        lambda p: p["traits"]["engaging"]
+    )
+
+    pretty += lb_block(
+        "Curious",
+        "🧠",
+        rank_top3(profiles, lambda p: p["traits"]["curious"]),
+        lambda p: p["traits"]["curious"]
+    )
+
+    pretty += lb_block(
+        "Humorous",
+        "😂",
+        rank_top3(profiles, lambda p: p["traits"]["humorous"]),
+        lambda p: p["traits"]["humorous"]
+    )
+
+    pretty += lb_block(
+        "Supportive",
+        "🤍",
+        rank_top3(profiles, lambda p: p["traits"]["supportive"]),
+        lambda p: p["traits"]["supportive"]
+    )
+
+    pretty += lb_block(
+        "Dominant",
+        "👑",
+        rank_top3(profiles, lambda p: p["traits"]["dominant"]),
+        lambda p: p["traits"]["dominant"]
+    )
+
+    # STYLE
+    pretty += "STYLE\n\n"
+
+    pretty += lb_block(
+        "Flirty",
+        "💕",
+        rank_top3(profiles, lambda p: p["styles"]["flirty"]),
+        lambda p: p["styles"]["flirty"]
+    )
+
+    pretty += lb_block(
+        "Sexual",
+        "🔞",
+        rank_top3(profiles, lambda p: p["styles"]["sexual"]),
+        lambda p: p["styles"]["sexual"]
+    )
+
+    pretty += lb_block(
+        "Curse",
+        "🤬",
+        rank_top3(profiles, lambda p: p["styles"]["curse"]),
+        lambda p: p["styles"]["curse"]
+    )
+
+    # ENERGY
+    pretty += "ENERGY\n\n"
+
+    pretty += lb_block(
+        "Hangout",
+        "🎧",
+        rank_top3(profiles, lambda p: p["hangout_energy"]),
+        lambda p: p["hangout_energy"]
+    )
+
+    pretty += lb_block(
+        "Club",
+        "🎉",
+        rank_top3(profiles, lambda p: p["club_energy"]),
+        lambda p: p["club_energy"]
+    )
+
+    pretty += lb_block(
+        "Risk",
+        "🔥",
+        rank_top3(profiles, lambda p: p["risk"]),
+        lambda p: p["risk"]
+    )
+
+    pretty += "━━━━━━━━━━━━━━━━━━━━"
+
+    return pretty
+
+
+# =================================================
 # ROOM VIBE ENDPOINT (SL-SAFE, PROFILE-STYLE)
 # =================================================
 
@@ -688,6 +836,21 @@ def profiles_available():
 @app.route("/leaderboard")
 def leaderboard():
     return Response(json.dumps(build_profiles()), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
+
+@app.route("/leaderboard/sl")
+def leaderboard_sl():
+
+    profiles = build_profiles()
+    pretty = build_leaderboard_pretty(profiles)
+
+    return Response(
+        json.dumps({
+            "pretty_text": pretty
+        }, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
+
 
 @app.route("/")
 def ok():
