@@ -848,16 +848,37 @@ def leaderboard_board():
 def leaderboard_live():
 
     profiles = build_profiles()
-    pretty = build_leaderboard_pretty(profiles)
+
+    if not profiles:
+        return jsonify({"trait":"None","top":[]})
+
+    # Rotate trait here if you want later
+    trait_key = "confidence"
+    trait_label = "Confidence"
+
+    # Rank top 3
+    ranked = sorted(
+        profiles,
+        key=lambda p: p["confidence"],
+        reverse=True
+    )[:3]
+
+    top = [
+        {
+            "name": p["name"],
+            "score": p["confidence"]
+        }
+        for p in ranked
+    ]
 
     return Response(
         json.dumps({
-            "pretty_text": pretty
+            "trait": trait_label,
+            "top": top
         }, ensure_ascii=False),
         mimetype="application/json; charset=utf-8",
         headers={"Access-Control-Allow-Origin": "*"}
     )
-
 
 @app.route("/")
 def ok():
