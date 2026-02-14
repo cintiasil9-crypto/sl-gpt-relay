@@ -891,3 +891,10 @@ def leaderboard_board():
 @app.route("/")
 def ok():
     return "OK", 200
+
+# ==========================================
+# REQUIRED FOR RENDER
+# ==========================================
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
