@@ -7,7 +7,7 @@ from collections import defaultdict
 # =================================================
 
 app = Flask(__name__)
-GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
+GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
 
 CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
@@ -213,8 +213,18 @@ def extract_hits(text):
 # =================================================
 
 def fetch_rows():
-    r = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
+    if not GOOGLE_PROFILES_FEED:
+        return []
+
+    try:
+        r = requests.get(GOOGLE_PROFILES_FEED, timeout=10)
+    except Exception:
+        return []
+
     m = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
+    if not m:
+        return []
+
     payload = json.loads(m.group(1))
     cols = [c["label"] for c in payload["table"]["cols"]]
 
@@ -224,6 +234,7 @@ def fetch_rows():
         for i, cell in enumerate(row["c"]):
             rec[cols[i]] = cell["v"] if cell else 0
         rows.append(rec)
+
     return rows
 
 # =================================================
