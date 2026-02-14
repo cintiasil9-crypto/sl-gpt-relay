@@ -11,6 +11,7 @@ GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
 
 CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
+NOW = time.time()
 
 # =================================================
 # WEIGHTS
@@ -178,7 +179,7 @@ def row(icon, label, value):
 # =================================================
 
 def decay(ts):
-    age_hrs = (NOW - ts) / 3600
+    age_hrs = (time.time() - ts) / 3600
     if age_hrs <= 1: return 1.0
     if age_hrs <= 24: return 0.7
     return 0.4
@@ -272,7 +273,7 @@ def build_profiles():
         if not uid:
             continue
 
-        ts = float(r.get("timestamp", NOW))
+        ts = float(r.get("timestamp", time.time()))
         w = decay(ts)
 
         p = profiles.setdefault(uid, {
@@ -287,7 +288,7 @@ def build_profiles():
         msgs = max(int(r.get("messages", 1)), 1)
         p["messages"] += msgs * w
 
-        if NOW - ts < 3600:
+        if time.time() - ts < 3600:
             p["recent"] += msgs
 
         hits = extract_hits(r.get("context_sample", ""))
@@ -759,7 +760,13 @@ def build_leaderboard_pretty(profiles):
 @app.route("/room/vibe", methods=["POST"])
 def room_vibe():
     data = request.get_json(silent=True) or {}
-    uuids = set(data.get("uuids", []))
+
+    if "uuids" in data:
+        uuids = set(data.get("uuids", []))
+    elif "uuid" in data:
+        uuids = {data.get("uuid")}
+    else:
+        uuids = set()
 
     profiles = [
         p for p in build_profiles()
