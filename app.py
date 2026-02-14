@@ -844,6 +844,20 @@ def leaderboard_board():
 
     return html
 
+@app.route("/leaderboard/live", methods=["GET"])
+def leaderboard_live():
+
+    profiles = build_profiles()
+    pretty = build_leaderboard_pretty(profiles)
+
+    return Response(
+        json.dumps({
+            "pretty_text": pretty
+        }, ensure_ascii=False),
+        mimetype="application/json; charset=utf-8",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
+
 
 @app.route("/")
 def ok():
