@@ -652,106 +652,50 @@ def build_leaderboard_pretty(profiles):
         return "No leaderboard data available."
 
     pretty = "━━━━━━━━━━━━━━━━━━━━\n"
-    pretty += "🧠 LEADERBOARD\n"
+    pretty += "🏆 SL SOCIAL EXPERIMENT\n"
+    pretty += "COMPETITIVE LEADERBOARD\n"
     pretty += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
+    medals = ["🥇", "🥈", "🥉"]
+
+    def top3(title, key_fn):
+        ranked = sorted(profiles, key=key_fn, reverse=True)[:3]
+
+        if not ranked or key_fn(ranked[0]) <= 0:
+            return ""  # skip empty categories
+
+        block = f"{title}\n"
+
+        for i, p in enumerate(ranked):
+            score = key_fn(p)
+            medal = medals[i] if i < 3 else ""
+            champ = " 🔥 CURRENT CHAMPION" if i == 0 else ""
+            block += f"{medal} {p['name']} — {score}%{champ}\n"
+
+        return block + "\n"
+
     # PERSONALITY
-    pretty += "PERSONALITY\n\n"
-
-    pretty += lb_block(
-        "Confidence",
-        "📊",
-        sorted(profiles, key=lambda p: p["confidence"], reverse=True)[:3],
-        lambda p: p["confidence"]
-    )
-
-    pretty += lb_block(
-        "Engaging",
-        "💬",
-        rank_top3(profiles, lambda p: p["traits"]["engaging"]),
-        lambda p: p["traits"]["engaging"]
-    )
-
-    pretty += lb_block(
-        "Curious",
-        "🧠",
-        rank_top3(profiles, lambda p: p["traits"]["curious"]),
-        lambda p: p["traits"]["curious"]
-    )
-
-    pretty += lb_block(
-        "Humorous",
-        "😂",
-        rank_top3(profiles, lambda p: p["traits"]["humorous"]),
-        lambda p: p["traits"]["humorous"]
-    )
-
-    pretty += lb_block(
-        "Supportive",
-        "🤍",
-        rank_top3(profiles, lambda p: p["traits"]["supportive"]),
-        lambda p: p["traits"]["supportive"]
-    )
-
-    pretty += lb_block(
-        "Dominant",
-        "👑",
-        rank_top3(profiles, lambda p: p["traits"]["dominant"]),
-        lambda p: p["traits"]["dominant"]
-    )
+    pretty += top3("📊 Confidence", lambda p: p["confidence"])
+    pretty += top3("💬 Engaging", lambda p: p["traits"]["engaging"])
+    pretty += top3("🧠 Curious", lambda p: p["traits"]["curious"])
+    pretty += top3("😂 Humorous", lambda p: p["traits"]["humorous"])
+    pretty += top3("🤍 Supportive", lambda p: p["traits"]["supportive"])
+    pretty += top3("👑 Dominant", lambda p: p["traits"]["dominant"])
+    pretty += top3("⚔ Combative", lambda p: p["traits"]["combative"])
 
     # STYLE
-    pretty += "STYLE\n\n"
-
-    pretty += lb_block(
-        "Flirty",
-        "💕",
-        rank_top3(profiles, lambda p: p["styles"]["flirty"]),
-        lambda p: p["styles"]["flirty"]
-    )
-
-    pretty += lb_block(
-        "Sexual",
-        "🔞",
-        rank_top3(profiles, lambda p: p["styles"]["sexual"]),
-        lambda p: p["styles"]["sexual"]
-    )
-
-    pretty += lb_block(
-        "Curse",
-        "🤬",
-        rank_top3(profiles, lambda p: p["styles"]["curse"]),
-        lambda p: p["styles"]["curse"]
-    )
+    pretty += top3("💕 Flirty", lambda p: p["styles"]["flirty"])
+    pretty += top3("🔞 Sexual", lambda p: p["styles"]["sexual"])
+    pretty += top3("🤬 Curse", lambda p: p["styles"]["curse"])
 
     # ENERGY
-    pretty += "ENERGY\n\n"
-
-    pretty += lb_block(
-        "Hangout",
-        "🎧",
-        rank_top3(profiles, lambda p: p["hangout_energy"]),
-        lambda p: p["hangout_energy"]
-    )
-
-    pretty += lb_block(
-        "Club",
-        "🎉",
-        rank_top3(profiles, lambda p: p["club_energy"]),
-        lambda p: p["club_energy"]
-    )
-
-    pretty += lb_block(
-        "Risk",
-        "🔥",
-        rank_top3(profiles, lambda p: p["risk"]),
-        lambda p: p["risk"]
-    )
+    pretty += top3("🎧 Hangout Energy", lambda p: p["hangout_energy"])
+    pretty += top3("🎉 Club Energy", lambda p: p["club_energy"])
+    pretty += top3("🔥 Risk Energy", lambda p: p["risk"])
 
     pretty += "━━━━━━━━━━━━━━━━━━━━"
 
     return pretty
-
 
 # =================================================
 # ROOM VIBE ENDPOINT (SL-SAFE, PROFILE-STYLE)
