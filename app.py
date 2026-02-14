@@ -858,6 +858,35 @@ def leaderboard_sl():
         headers={"Access-Control-Allow-Origin": "*"}
     )
 
+@app.route("/leaderboard/board")
+def leaderboard_board():
+
+    profiles = build_profiles()
+    pretty = build_leaderboard_pretty(profiles)
+
+    html = f"""
+    <html>
+    <head>
+    <meta http-equiv="refresh" content="60">
+    <style>
+        body {{
+            background:#0d0d14;
+            color:#e6e6ff;
+            font-family: Consolas, monospace;
+            white-space: pre-wrap;
+            font-size:16px;
+            padding:20px;
+        }}
+    </style>
+    </head>
+    <body>
+    {pretty}
+    </body>
+    </html>
+    """
+
+    return html
+
 
 @app.route("/")
 def ok():
