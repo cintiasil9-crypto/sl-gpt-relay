@@ -7,11 +7,12 @@ from collections import defaultdict
 # =================================================
 
 app = Flask(__name__)
+
 GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
+print("GOOGLE_PROFILES_FEED:", GOOGLE_PROFILES_FEED)
 
 CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
-NOW = time.time()
 
 # =================================================
 # WEIGHTS
