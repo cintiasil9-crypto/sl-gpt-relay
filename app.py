@@ -1,5 +1,10 @@
 from flask import Flask, Response, jsonify, request
-import os, time, math, requests, json, re
+import os
+import time
+import math
+import requests
+import json
+import re
 from collections import defaultdict
 
 # =================================================
@@ -8,11 +13,12 @@ from collections import defaultdict
 
 app = Flask(__name__)
 
-GOOGLE_PROFILES_FEED = os.environ.get("GOOGLE_PROFILES_FEED")
-print("GOOGLE_PROFILES_FEED:", GOOGLE_PROFILES_FEED)
+GOOGLE_PROFILES_FEED = os.environ["GOOGLE_PROFILES_FEED"]
 
 CACHE = {"profiles": None, "ts": 0}
 CACHE_TTL = 300
+NOW = time.time()
+
 
 # =================================================
 # WEIGHTS
@@ -181,12 +187,16 @@ def row(icon, label, value):
 
 def decay(ts):
     age_hrs = (time.time() - ts) / 3600
-    if age_hrs <= 1: return 1.0
-    if age_hrs <= 24: return 0.7
+    if age_hrs <= 1:
+        return 1.0
+    if age_hrs <= 24:
+        return 0.7
     return 0.4
+
 
 def extract_hits(text):
     hits = defaultdict(int)
+
     if not text:
         return hits
 
@@ -214,22 +224,13 @@ def extract_hits(text):
 # =================================================
 
 def fetch_rows():
-    if not GOOGLE_PROFILES_FEED:
-        return []
-
-    try:
-        r = requests.get(GOOGLE_PROFILES_FEED, timeout=10)
-    except Exception:
-        return []
-
+    r = requests.get(GOOGLE_PROFILES_FEED, timeout=20)
     m = re.search(r"setResponse\((\{.*\})\)", r.text, re.S)
-    if not m:
-        return []
-
     payload = json.loads(m.group(1))
-    cols = [c["label"] for c in payload["table"]["cols"]]
 
+    cols = [c["label"] for c in payload["table"]["cols"]]
     rows = []
+
     for row in payload["table"]["rows"]:
         rec = {}
         for i, cell in enumerate(row["c"]):
