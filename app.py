@@ -394,30 +394,39 @@ def build_profiles():
 
 def build_platform_metrics():
 
-    profiles = build_profiles()
+    rows = fetch_rows()
     now = time.time()
 
-    total_profiles = len(profiles)
+    unique_profiles = set()
+    active_24h = set()
+    huds_online = set()
 
-    active_24h = sum(
-        1 for p in profiles
-        if p.get("recent", 0) > 0 or
-        any(
-            (now - float(r.get("timestamp", now))) <= 86400
-            for r in fetch_rows()
-            if r.get("avatar_uuid") == p["avatar_uuid"]
-        )
-    )
+    for r in rows:
+        uid = r.get("avatar_uuid")
+        if not uid:
+            continue
 
-    huds_online = sum(
-        1 for p in profiles
-        if p.get("recent", 0) > 0
-    )
+        unique_profiles.add(uid)
+
+        try:
+            ts = float(r.get("timestamp", 0))
+        except:
+            continue
+
+        age = now - ts
+
+        # Active in last 24h
+        if age <= 86400:
+            active_24h.add(uid)
+
+        # HUD considered "online" if activity in last 5 minutes
+        if age <= 300:
+            huds_online.add(uid)
 
     return {
-        "total_profiles": total_profiles,
-        "active_24h": active_24h,
-        "huds_online": huds_online
+        "total_profiles": len(unique_profiles),
+        "active_24h": len(active_24h),
+        "huds_online": len(huds_online)
     }
 
 # =================================================
