@@ -815,34 +815,114 @@ def leaderboard_sl():
         headers={"Access-Control-Allow-Origin": "*"}
     )
 
-@app.route("/leaderboard/board")
-def leaderboard_board():
+@app.route("/leaderboard/panels")
+def leaderboard_panels():
 
     profiles = build_profiles()
-    pretty = build_leaderboard_pretty(profiles)
+
+    if not profiles:
+        return "<h1>No Data</h1>"
+
+    # Example: Confidence ranking
+    ranked = sorted(profiles, key=lambda p: p["confidence"], reverse=True)[:3]
+
+    def panel_html(position, p, color):
+        medal = ["🥇","🥈","🥉"][position]
+        return f"""
+        <div class="panel">
+            <div class="medal">{medal}</div>
+            <div class="name">{p['name']}</div>
+            <div class="score">{p['confidence']}%</div>
+            <div class="bar">
+                <div class="fill" style="width:{p['confidence']}%; background:{color};"></div>
+            </div>
+        </div>
+        """
 
     html = f"""
     <html>
     <head>
-    <meta http-equiv="refresh" content="60">
-    <style>
-        body {{
-            background:#0d0d14;
-            color:#e6e6ff;
-            font-family: Consolas, monospace;
-            white-space: pre-wrap;
-            font-size:16px;
-            padding:20px;
-        }}
-    </style>
+        <meta http-equiv="refresh" content="60">
+        <style>
+            body {{
+                margin:0;
+                padding:30px;
+                background:#0d0f1a;
+                font-family:Arial, sans-serif;
+                color:white;
+            }}
+
+            .title {{
+                text-align:center;
+                font-size:36px;
+                margin-bottom:30px;
+                letter-spacing:2px;
+                color:#00f0ff;
+            }}
+
+            .board {{
+                display:flex;
+                flex-direction:column;
+                gap:20px;
+                max-width:700px;
+                margin:auto;
+            }}
+
+            .panel {{
+                background:#14182b;
+                border-radius:14px;
+                padding:20px;
+                box-shadow:0 0 15px rgba(0,255,255,0.2);
+                position:relative;
+            }}
+
+            .medal {{
+                font-size:28px;
+                position:absolute;
+                top:20px;
+                right:20px;
+            }}
+
+            .name {{
+                font-size:22px;
+                font-weight:bold;
+                margin-bottom:8px;
+            }}
+
+            .score {{
+                font-size:18px;
+                opacity:0.8;
+                margin-bottom:10px;
+            }}
+
+            .bar {{
+                background:#222;
+                border-radius:8px;
+                height:12px;
+                overflow:hidden;
+            }}
+
+            .fill {{
+                height:100%;
+                border-radius:8px;
+                transition:width 0.6s ease;
+            }}
+        </style>
     </head>
+
     <body>
-    {pretty}
+        <div class="title">🏆 CONFIDENCE LEADERBOARD</div>
+        <div class="board">
+            {panel_html(0, ranked[0], "#FFD700")}
+            {panel_html(1, ranked[1], "#C0C0C0")}
+            {panel_html(2, ranked[2], "#CD7F32")}
+        </div>
     </body>
     </html>
     """
 
     return html
+
 
 @app.route("/leaderboard/live", methods=["GET"])
 def leaderboard_live():
