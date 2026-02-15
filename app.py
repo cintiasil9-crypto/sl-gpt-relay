@@ -281,6 +281,10 @@ def build_profiles():
     rows = fetch_rows()
     profiles = {}
 
+     now = time.time()
+    active_24h_set = set()
+    huds_online_set = set()
+
     for r in rows:
         uid = r.get("avatar_uuid")
         if not uid:
@@ -288,6 +292,14 @@ def build_profiles():
 
         ts = float(r.get("timestamp", time.time()))
         w = decay(ts)
+
+    age = now - ts
+
+        if age <= 86400:
+            active_24h_set.add(uid)
+
+        if age <= 300:
+            huds_online_set.add(uid)
 
         p = profiles.setdefault(uid, {
             "avatar_uuid": uid,
@@ -301,7 +313,7 @@ def build_profiles():
         msgs = max(int(r.get("messages", 1)), 1)
         p["messages"] += msgs * w
 
-        if time.time() - ts < 3600:
+        if age < 3600:
             p["recent"] += msgs
 
         hits = extract_hits(r.get("context_sample", ""))
@@ -384,9 +396,16 @@ def build_profiles():
             "pretty_text": pretty_text
         })
 
-    CACHE["profiles"] = out
-    CACHE["ts"] = time.time()
-    return out
+CACHE["profiles"] = out
+CACHE["ts"] = time.time()
+
+CACHE["platform_metrics"] = {
+    "total_profiles": len(profiles),
+    "active_24h": len(active_24h_set),
+    "huds_online": len(huds_online_set)
+}
+
+return out
 
 # =================================================
 # PLATFORM METRICS
@@ -394,47 +413,15 @@ def build_profiles():
 
 def build_platform_metrics():
 
-    try:
-        rows = fetch_rows()
-    except Exception as e:
-        print("Metrics fetch error:", e)
-        return {
-            "total_profiles": 0,
-            "active_24h": 0,
-            "huds_online": 0
-        }
+    if not CACHE.get("profiles"):
+        build_profiles()
 
-    now = time.time()
+    return CACHE.get("platform_metrics", {
+        "total_profiles": 0,
+        "active_24h": 0,
+        "huds_online": 0
+    })
 
-    unique_profiles = set()
-    active_24h = set()
-    huds_online = set()
-
-    for r in rows:
-        uid = r.get("avatar_uuid")
-        if not uid:
-            continue
-
-        unique_profiles.add(uid)
-
-        try:
-            ts = float(r.get("timestamp", 0))
-        except:
-            continue
-
-        age = now - ts
-
-        if age <= 86400:
-            active_24h.add(uid)
-
-        if age <= 300:
-            huds_online.add(uid)
-
-    return {
-        "total_profiles": len(unique_profiles),
-        "active_24h": len(active_24h),
-        "huds_online": len(huds_online)
-    }
 
 # =================================================
 # ROOM VIBE HELPERS (REQUIRED)
