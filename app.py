@@ -1146,22 +1146,34 @@ def metrics_panels():
         <div class="container">
             <div class="title">📊 PLATFORM METRICS</div>
 
-            <div class="board">
+<div class="board">
 
-                <div class="card">
-                    <div class="label">TOTAL PROFILES</div>
-                    <div class="value">{metrics["total_profiles"]}</div>
-                </div>
+    <div class="card">
+        <div class="label">TOTAL REGISTERED</div>
+        <div class="value">{metrics["total_registered"]}</div>
+    </div>
 
-                <div class="card">
-                    <div class="label">ACTIVE LAST 24 HOURS</div>
-                    <div class="value">{metrics["active_24h"]}</div>
-                </div>
+    <div class="card">
+        <div class="label">SPOKE LAST 24 HOURS</div>
+        <div class="value">{metrics["spoke_24h"]}</div>
+    </div>
 
-                <div class="card">
-                    <div class="label">HUDS CURRENTLY ONLINE</div>
-                    <div class="value">{metrics["huds_online"]}</div>
-                </div>
+    <div class="card">
+        <div class="label">LIVE RIGHT NOW</div>
+        <div class="value">{metrics["live_now"]}</div>
+    </div>
+
+    <div class="card">
+        <div class="label">POWER USERS (1H)</div>
+        <div class="value">{metrics["power_users"]}</div>
+    </div>
+
+    <div class="card">
+        <div class="label">SILENT OBSERVERS</div>
+        <div class="value">{metrics["silent_observers"]}</div>
+    </div>
+
+</div>
 
             </div>
         </div>
