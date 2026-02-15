@@ -282,26 +282,43 @@ def build_profiles():
     profiles = {}
 
     now = time.time()
-    active_24h_set = set()
-    huds_online_set = set()
+
+    total_registered_set = set()
+    spoke_24h_set = set()
+    live_now_set = set()
+    power_users_set = set()
+    silent_set = set()
 
     for r in rows:
         uid = r.get("avatar_uuid")
         if not uid:
             continue
 
+        total_registered_set.add(uid)
+
         try:
             ts = float(r.get("timestamp", now))
+            msgs = int(r.get("messages", 0))
         except:
             continue
 
         age = now - ts
 
-        if age <= 86400:
-            active_24h_set.add(uid)
+        # Spoke in last 24 hours
+        if age <= 86400 and msgs > 0:
+            spoke_24h_set.add(uid)
 
-        if age <= 300:
-            huds_online_set.add(uid)
+        # Live right now (real chat activity)
+        if age <= 120 and msgs > 0:
+            live_now_set.add(uid)
+
+        # Silent observer (HUD ping but no speech)
+        if age <= 300 and msgs == 0:
+            silent_set.add(uid)
+
+        # Power users (20+ msgs in last hour)
+        if age <= 3600 and msgs >= 20:
+            power_users_set.add(uid)
 
         w = decay(ts)
 
@@ -404,10 +421,12 @@ def build_profiles():
     CACHE["profiles"] = out
     CACHE["ts"] = time.time()
     CACHE["platform_metrics"] = {
-        "total_profiles": len(profiles),
-        "active_24h": len(active_24h_set),
-        "huds_online": len(huds_online_set)
-    }
+    "total_registered": len(total_registered_set),
+    "spoke_24h": len(spoke_24h_set),
+    "live_now": len(live_now_set),
+    "power_users": len(power_users_set),
+    "silent_observers": len(silent_set)
+}
 
     return out
 # =================================================
