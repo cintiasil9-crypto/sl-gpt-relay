@@ -281,7 +281,7 @@ def build_profiles():
     rows = fetch_rows()
     profiles = {}
 
-     now = time.time()
+    now = time.time()
     active_24h_set = set()
     huds_online_set = set()
 
@@ -290,16 +290,20 @@ def build_profiles():
         if not uid:
             continue
 
-        ts = float(r.get("timestamp", time.time()))
-        w = decay(ts)
+        try:
+            ts = float(r.get("timestamp", now))
+        except:
+            continue
 
-    age = now - ts
+        age = now - ts
 
         if age <= 86400:
             active_24h_set.add(uid)
 
         if age <= 300:
             huds_online_set.add(uid)
+
+        w = decay(ts)
 
         p = profiles.setdefault(uid, {
             "avatar_uuid": uid,
@@ -342,12 +346,12 @@ def build_profiles():
             for k in STYLE_WEIGHTS
         }
 
-        # ---------------- ENERGY METRICS (RESTORED) ----------------
         risk = min((traits["combative"] + styles["curse"]) * 0.8, 1.0)
         club = min((traits["dominant"] + styles["sexual"] + styles["curse"]) * 0.6, 1.0)
         hangout = min((traits["supportive"] + traits["curious"]) * 0.6, 1.0)
 
         vibe = "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨"
+
 
         # ---------------- PRETTY PROFILE TEXT ----------------
         pretty_text = (
@@ -396,17 +400,16 @@ def build_profiles():
             "pretty_text": pretty_text
         })
 
-CACHE["profiles"] = out
-CACHE["ts"] = time.time()
+ # CACHE EVERYTHING INSIDE THE FUNCTION
+    CACHE["profiles"] = out
+    CACHE["ts"] = time.time()
+    CACHE["platform_metrics"] = {
+        "total_profiles": len(profiles),
+        "active_24h": len(active_24h_set),
+        "huds_online": len(huds_online_set)
+    }
 
-CACHE["platform_metrics"] = {
-    "total_profiles": len(profiles),
-    "active_24h": len(active_24h_set),
-    "huds_online": len(huds_online_set)
-}
-
-return out
-
+    return out
 # =================================================
 # PLATFORM METRICS
 # =================================================
