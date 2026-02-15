@@ -1020,17 +1020,6 @@ def leaderboard_live():
         mimetype="application/json; charset=utf-8",
         headers={"Access-Control-Allow-Origin": "*"}
     )
-
-@app.route("/metrics/platform", methods=["GET"])
-def platform_metrics():
-
-    metrics = build_platform_metrics()
-
-    return Response(
-        json.dumps(metrics),
-        mimetype="application/json",
-        headers={"Access-Control-Allow-Origin": "*"}
-    )
     
 @app.route("/metrics/platform", methods=["GET"])
 def platform_metrics():
