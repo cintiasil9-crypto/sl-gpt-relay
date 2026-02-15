@@ -435,6 +435,7 @@ def build_profiles():
 
 def build_platform_metrics():
 
+    # Make sure profiles + metrics are built
     if not CACHE.get("profiles"):
         build_profiles()
 
@@ -445,8 +446,6 @@ def build_platform_metrics():
         "power_users": 0,
         "silent_observers": 0
     })
-
-
 
 # =================================================
 # ROOM VIBE HELPERS (REQUIRED)
