@@ -438,11 +438,13 @@ def build_platform_metrics():
     if not CACHE.get("profiles"):
         build_profiles()
 
-    return CACHE.get("platform_metrics", {
-        "total_profiles": 0,
-        "active_24h": 0,
-        "huds_online": 0
-    })
+return CACHE.get("platform_metrics", {
+    "total_registered": 0,
+    "spoke_24h": 0,
+    "live_now": 0,
+    "power_users": 0,
+    "silent_observers": 0
+})
 
 
 # =================================================
@@ -1060,7 +1062,11 @@ def platform_metrics():
 @app.route("/metrics/panels")
 def metrics_panels():
 
-    metrics = build_platform_metrics()
+    metrics = build_platform_metrics() or {}
+
+    total = metrics.get("total_registered", 0)
+    active = metrics.get("spoke_24h", 0)
+    online = metrics.get("live_now", 0)
 
     html = f"""
     <html>
@@ -1074,7 +1080,7 @@ def metrics_panels():
             height:100%;
             width:100%;
             overflow:hidden;
-            font-family: 'Segoe UI', sans-serif;
+            font-family:'Segoe UI',sans-serif;
             background: radial-gradient(circle at center,
                 #140030 0%,
                 #0b001f 40%,
@@ -1098,7 +1104,7 @@ def metrics_panels():
             letter-spacing:4px;
             margin-bottom:60px;
             text-align:center;
-            background: linear-gradient(90deg, #00f0ff, #ff00ff);
+            background:linear-gradient(90deg,#00f0ff,#ff00ff);
             -webkit-background-clip:text;
             -webkit-text-fill-color:transparent;
             text-shadow:0 0 25px rgba(0,255,255,0.5);
@@ -1113,8 +1119,8 @@ def metrics_panels():
         }}
 
         .card {{
-            background: rgba(25,25,60,0.6);
-            backdrop-filter: blur(12px);
+            background:rgba(25,25,60,0.6);
+            backdrop-filter:blur(12px);
             border-radius:24px;
             padding:40px;
             box-shadow:
@@ -1133,7 +1139,7 @@ def metrics_panels():
         .value {{
             font-size:64px;
             font-weight:700;
-            background: linear-gradient(90deg, #00f0ff, #ff00ff);
+            background:linear-gradient(90deg,#00f0ff,#ff00ff);
             -webkit-background-clip:text;
             -webkit-text-fill-color:transparent;
             text-shadow:0 0 20px rgba(0,255,255,0.4);
@@ -1149,18 +1155,18 @@ def metrics_panels():
             <div class="board">
 
                 <div class="card">
-                    <div class="label">TOTAL PROFILES</div>
-                    <div class="value">{metrics["total_profiles"]}</div>
+                    <div class="label">TOTAL REGISTERED</div>
+                    <div class="value">{total}</div>
                 </div>
 
                 <div class="card">
-                    <div class="label">ACTIVE LAST 24 HOURS</div>
-                    <div class="value">{metrics["active_24h"]}</div>
+                    <div class="label">SPOKE LAST 24 HOURS</div>
+                    <div class="value">{active}</div>
                 </div>
 
                 <div class="card">
-                    <div class="label">HUDS CURRENTLY ONLINE</div>
-                    <div class="value">{metrics["huds_online"]}</div>
+                    <div class="label">LIVE RIGHT NOW</div>
+                    <div class="value">{online}</div>
                 </div>
 
             </div>
@@ -1170,7 +1176,6 @@ def metrics_panels():
     """
 
     return html
-
 
 @app.route("/")
 def ok():
