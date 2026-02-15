@@ -819,17 +819,12 @@ def leaderboard_sl():
 def leaderboard_panels():
 
     profiles = build_profiles()
-
-    if not profiles:
-        return "<h1>No Data</h1>"
-
-    # Example: Confidence ranking
     ranked = sorted(profiles, key=lambda p: p["confidence"], reverse=True)[:3]
 
-    def panel_html(position, p, color):
-        medal = ["🥇","🥈","🥉"][position]
+    def card(pos, p, color):
+        medal = ["🥇","🥈","🥉"][pos]
         return f"""
-        <div class="panel">
+        <div class="card">
             <div class="medal">{medal}</div>
             <div class="name">{p['name']}</div>
             <div class="score">{p['confidence']}%</div>
@@ -842,80 +837,113 @@ def leaderboard_panels():
     html = f"""
     <html>
     <head>
-        <meta http-equiv="refresh" content="60">
-        <style>
-            body {{
-                margin:0;
-                padding:30px;
-                background:#0d0f1a;
-                font-family:Arial, sans-serif;
-                color:white;
-            }}
+    <meta http-equiv="refresh" content="60">
+    <style>
 
-            .title {{
-                text-align:center;
-                font-size:36px;
-                margin-bottom:30px;
-                letter-spacing:2px;
-                color:#00f0ff;
-            }}
+        html, body {{
+            margin:0;
+            padding:0;
+            height:100%;
+            width:100%;
+            overflow:hidden;
+            font-family: 'Segoe UI', sans-serif;
+            background: radial-gradient(circle at center,
+                #12002b 0%,
+                #0a001a 40%,
+                #000010 100%);
+            color:white;
+        }}
 
-            .board {{
-                display:flex;
-                flex-direction:column;
-                gap:20px;
-                max-width:700px;
-                margin:auto;
-            }}
+        .container {{
+            width:100%;
+            height:100%;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            padding:40px;
+            box-sizing:border-box;
+        }}
 
-            .panel {{
-                background:#14182b;
-                border-radius:14px;
-                padding:20px;
-                box-shadow:0 0 15px rgba(0,255,255,0.2);
-                position:relative;
-            }}
+        .title {{
+            font-size:48px;
+            letter-spacing:4px;
+            margin-bottom:40px;
+            text-align:center;
+            background: linear-gradient(90deg, #00f0ff, #ff00ff);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            text-shadow:0 0 20px rgba(0,255,255,0.4);
+        }}
 
-            .medal {{
-                font-size:28px;
-                position:absolute;
-                top:20px;
-                right:20px;
-            }}
+        .board {{
+            width:90%;
+            max-width:1000px;
+            display:flex;
+            flex-direction:column;
+            gap:30px;
+        }}
 
-            .name {{
-                font-size:22px;
-                font-weight:bold;
-                margin-bottom:8px;
-            }}
+        .card {{
+            background: rgba(20,20,40,0.6);
+            backdrop-filter: blur(10px);
+            border-radius:20px;
+            padding:30px;
+            box-shadow:
+                0 0 20px rgba(0,255,255,0.2),
+                0 0 40px rgba(255,0,255,0.15);
+            position:relative;
+        }}
 
-            .score {{
-                font-size:18px;
-                opacity:0.8;
-                margin-bottom:10px;
-            }}
+        .medal {{
+            position:absolute;
+            right:30px;
+            top:25px;
+            font-size:32px;
+        }}
 
-            .bar {{
-                background:#222;
-                border-radius:8px;
-                height:12px;
-                overflow:hidden;
-            }}
+        .name {{
+            font-size:28px;
+            font-weight:600;
+            margin-bottom:10px;
+        }}
 
-            .fill {{
-                height:100%;
-                border-radius:8px;
-                transition:width 0.6s ease;
-            }}
-        </style>
+        .score {{
+            font-size:18px;
+            opacity:0.7;
+            margin-bottom:15px;
+        }}
+
+        .bar {{
+            height:16px;
+            background:#111;
+            border-radius:10px;
+            overflow:hidden;
+        }}
+
+        .fill {{
+            height:100%;
+            border-radius:10px;
+            box-shadow:0 0 12px currentColor;
+            animation: grow 1.2s ease-out;
+        }}
+
+        @keyframes grow {{
+            from {{ width:0%; }}
+            to {{ width:100%; }}
+        }}
+
+    </style>
     </head>
 
     <body>
-        <div class="title">🏆 CONFIDENCE LEADERBOARD</div>
-        <div class="board">
-            {panel_html(0, ranked[0], "#FFD700")}
-            {panel_html(1, ranked[1], "#C0C0C0")}
-            {panel_html(2, ranked[2], "#CD7F32")}
+        <div class="container">
+            <div class="title">🏆 CONFIDENCE LEADERBOARD</div>
+            <div class="board">
+                {card(0, ranked[0], "#FFD700")}
+                {card(1, ranked[1], "#C0C0C0")}
+                {card(2, ranked[2], "#CD7F32")}
+            </div>
         </div>
     </body>
     </html>
