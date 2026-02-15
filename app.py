@@ -1089,14 +1089,14 @@ def metrics_panels():
             flex-direction:column;
             align-items:center;
             justify-content:center;
-            padding:40px;
+            padding:30px;
             box-sizing:border-box;
         }}
 
         .title {{
-            font-size:48px;
+            font-size:42px;
             letter-spacing:4px;
-            margin-bottom:60px;
+            margin-bottom:30px;
             text-align:center;
             background: linear-gradient(90deg, #00f0ff, #ff00ff);
             -webkit-background-clip:text;
@@ -1105,33 +1105,38 @@ def metrics_panels():
         }}
 
         .board {{
-            width:90%;
-            max-width:900px;
-            display:flex;
-            flex-direction:column;
-            gap:40px;
+            width:100%;
+            height:100%;
+            display:grid;
+            grid-template-columns: repeat(2, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap:20px;
         }}
 
         .card {{
             background: rgba(25,25,60,0.6);
             backdrop-filter: blur(12px);
             border-radius:24px;
-            padding:40px;
+            padding:25px;
             box-shadow:
                 0 0 25px rgba(0,255,255,0.25),
                 0 0 50px rgba(255,0,255,0.2);
+            display:flex;
+            flex-direction:column;
+            justify-content:center;
+            align-items:center;
             text-align:center;
         }}
 
         .label {{
-            font-size:22px;
+            font-size:18px;
             letter-spacing:2px;
             opacity:0.7;
-            margin-bottom:15px;
+            margin-bottom:10px;
         }}
 
         .value {{
-            font-size:64px;
+            font-size:52px;
             font-weight:700;
             background: linear-gradient(90deg, #00f0ff, #ff00ff);
             -webkit-background-clip:text;
@@ -1146,34 +1151,32 @@ def metrics_panels():
         <div class="container">
             <div class="title">📊 PLATFORM METRICS</div>
 
-<div class="board">
+            <div class="board">
 
-    <div class="card">
-        <div class="label">TOTAL REGISTERED</div>
-        <div class="value">{metrics["total_registered"]}</div>
-    </div>
+                <div class="card">
+                    <div class="label">TOTAL REGISTERED</div>
+                    <div class="value">{metrics["total_registered"]}</div>
+                </div>
 
-    <div class="card">
-        <div class="label">SPOKE LAST 24 HOURS</div>
-        <div class="value">{metrics["spoke_24h"]}</div>
-    </div>
+                <div class="card">
+                    <div class="label">SPOKE LAST 24 HOURS</div>
+                    <div class="value">{metrics["spoke_24h"]}</div>
+                </div>
 
-    <div class="card">
-        <div class="label">LIVE RIGHT NOW</div>
-        <div class="value">{metrics["live_now"]}</div>
-    </div>
+                <div class="card">
+                    <div class="label">LIVE RIGHT NOW</div>
+                    <div class="value">{metrics["live_now"]}</div>
+                </div>
 
-    <div class="card">
-        <div class="label">POWER USERS (1H)</div>
-        <div class="value">{metrics["power_users"]}</div>
-    </div>
+                <div class="card">
+                    <div class="label">POWER USERS (1H)</div>
+                    <div class="value">{metrics["power_users"]}</div>
+                </div>
 
-    <div class="card">
-        <div class="label">SILENT OBSERVERS</div>
-        <div class="value">{metrics["silent_observers"]}</div>
-    </div>
-
-</div>
+                <div class="card">
+                    <div class="label">SILENT OBSERVERS</div>
+                    <div class="value">{metrics["silent_observers"]}</div>
+                </div>
 
             </div>
         </div>
