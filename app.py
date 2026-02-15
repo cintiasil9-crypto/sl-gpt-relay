@@ -1032,6 +1032,121 @@ def platform_metrics():
         headers={"Access-Control-Allow-Origin": "*"}
     )
 
+@app.route("/metrics/panels")
+def metrics_panels():
+
+    metrics = build_platform_metrics()
+
+    html = f"""
+    <html>
+    <head>
+    <meta http-equiv="refresh" content="60">
+    <style>
+
+        html, body {{
+            margin:0;
+            padding:0;
+            height:100%;
+            width:100%;
+            overflow:hidden;
+            font-family: 'Segoe UI', sans-serif;
+            background: radial-gradient(circle at center,
+                #140030 0%,
+                #0b001f 40%,
+                #000010 100%);
+            color:white;
+        }}
+
+        .container {{
+            width:100%;
+            height:100%;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            padding:40px;
+            box-sizing:border-box;
+        }}
+
+        .title {{
+            font-size:48px;
+            letter-spacing:4px;
+            margin-bottom:60px;
+            text-align:center;
+            background: linear-gradient(90deg, #00f0ff, #ff00ff);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            text-shadow:0 0 25px rgba(0,255,255,0.5);
+        }}
+
+        .board {{
+            width:90%;
+            max-width:900px;
+            display:flex;
+            flex-direction:column;
+            gap:40px;
+        }}
+
+        .card {{
+            background: rgba(25,25,60,0.6);
+            backdrop-filter: blur(12px);
+            border-radius:24px;
+            padding:40px;
+            box-shadow:
+                0 0 25px rgba(0,255,255,0.25),
+                0 0 50px rgba(255,0,255,0.2);
+            text-align:center;
+        }}
+
+        .label {{
+            font-size:22px;
+            letter-spacing:2px;
+            opacity:0.7;
+            margin-bottom:15px;
+        }}
+
+        .value {{
+            font-size:64px;
+            font-weight:700;
+            background: linear-gradient(90deg, #00f0ff, #ff00ff);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            text-shadow:0 0 20px rgba(0,255,255,0.4);
+        }}
+
+    </style>
+    </head>
+
+    <body>
+        <div class="container">
+            <div class="title">📊 PLATFORM METRICS</div>
+
+            <div class="board">
+
+                <div class="card">
+                    <div class="label">TOTAL PROFILES</div>
+                    <div class="value">{metrics["total_profiles"]}</div>
+                </div>
+
+                <div class="card">
+                    <div class="label">ACTIVE LAST 24 HOURS</div>
+                    <div class="value">{metrics["active_24h"]}</div>
+                </div>
+
+                <div class="card">
+                    <div class="label">HUDS CURRENTLY ONLINE</div>
+                    <div class="value">{metrics["huds_online"]}</div>
+                </div>
+
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    return html
+
+
 @app.route("/")
 def ok():
     return "OK", 200
