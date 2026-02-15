@@ -387,6 +387,39 @@ def build_profiles():
     CACHE["profiles"] = out
     CACHE["ts"] = time.time()
     return out
+
+# =================================================
+# PLATFORM METRICS
+# =================================================
+
+def build_platform_metrics():
+
+    profiles = build_profiles()
+    now = time.time()
+
+    total_profiles = len(profiles)
+
+    active_24h = sum(
+        1 for p in profiles
+        if p.get("recent", 0) > 0 or
+        any(
+            (now - float(r.get("timestamp", now))) <= 86400
+            for r in fetch_rows()
+            if r.get("avatar_uuid") == p["avatar_uuid"]
+        )
+    )
+
+    huds_online = sum(
+        1 for p in profiles
+        if p.get("recent", 0) > 0
+    )
+
+    return {
+        "total_profiles": total_profiles,
+        "active_24h": active_24h,
+        "huds_online": huds_online
+    }
+
 # =================================================
 # ROOM VIBE HELPERS (REQUIRED)
 # =================================================
@@ -985,6 +1018,28 @@ def leaderboard_live():
             "top": top
         }, ensure_ascii=False),
         mimetype="application/json; charset=utf-8",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
+
+@app.route("/metrics/platform", methods=["GET"])
+def platform_metrics():
+
+    metrics = build_platform_metrics()
+
+    return Response(
+        json.dumps(metrics),
+        mimetype="application/json",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
+    
+@app.route("/metrics/platform", methods=["GET"])
+def platform_metrics():
+
+    metrics = build_platform_metrics()
+
+    return Response(
+        json.dumps(metrics),
+        mimetype="application/json",
         headers={"Access-Control-Allow-Origin": "*"}
     )
 
