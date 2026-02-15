@@ -394,7 +394,16 @@ def build_profiles():
 
 def build_platform_metrics():
 
-    rows = fetch_rows()
+    try:
+        rows = fetch_rows()
+    except Exception as e:
+        print("Metrics fetch error:", e)
+        return {
+            "total_profiles": 0,
+            "active_24h": 0,
+            "huds_online": 0
+        }
+
     now = time.time()
 
     unique_profiles = set()
@@ -415,11 +424,9 @@ def build_platform_metrics():
 
         age = now - ts
 
-        # Active in last 24h
         if age <= 86400:
             active_24h.add(uid)
 
-        # HUD considered "online" if activity in last 5 minutes
         if age <= 300:
             huds_online.add(uid)
 
