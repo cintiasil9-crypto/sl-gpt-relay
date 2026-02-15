@@ -438,13 +438,14 @@ def build_platform_metrics():
     if not CACHE.get("profiles"):
         build_profiles()
 
-return CACHE.get("platform_metrics", {
-    "total_registered": 0,
-    "spoke_24h": 0,
-    "live_now": 0,
-    "power_users": 0,
-    "silent_observers": 0
-})
+    return CACHE.get("platform_metrics", {
+        "total_registered": 0,
+        "spoke_24h": 0,
+        "live_now": 0,
+        "power_users": 0,
+        "silent_observers": 0
+    })
+
 
 
 # =================================================
