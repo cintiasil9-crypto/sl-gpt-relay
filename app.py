@@ -271,17 +271,41 @@ def build_summary(conf, traits, styles):
     return base
 
 # =================================================
-# BUILD PROFILES (FULL, RESTORED, LEADERBOARD-SAFE)
+# BUILD PROFILES (FULL, METRICS FIXED)
 # =================================================
 
 def build_profiles():
-    if CACHE["profiles"] and time.time() - CACHE["ts"] < CACHE_TTL:
+
+    if CACHE.get("profiles") and time.time() - CACHE.get("ts", 0) < CACHE_TTL:
         return CACHE["profiles"]
 
     rows = fetch_rows()
     profiles = {}
-
     now = time.time()
+
+    # -----------------------------------------
+    # TRACK LATEST ACTIVITY PER AVATAR
+    # -----------------------------------------
+
+    latest_activity = {}
+
+    for r in rows:
+        uid = r.get("avatar_uuid")
+        if not uid:
+            continue
+
+        try:
+            ts = float(r.get("timestamp", 0))
+            msgs = int(r.get("messages", 0))
+        except:
+            continue
+
+        if uid not in latest_activity or ts > latest_activity[uid]["ts"]:
+            latest_activity[uid] = {"ts": ts, "msgs": msgs}
+
+    # -----------------------------------------
+    # PLATFORM METRIC SETS
+    # -----------------------------------------
 
     total_registered_set = set()
     spoke_24h_set = set()
@@ -289,37 +313,40 @@ def build_profiles():
     power_users_set = set()
     silent_set = set()
 
+    for uid, data in latest_activity.items():
+        age = now - data["ts"]
+        msgs = data["msgs"]
+
+        total_registered_set.add(uid)
+
+        if age <= 86400 and msgs > 0:
+            spoke_24h_set.add(uid)
+
+        if age <= 120 and msgs > 0:
+            live_now_set.add(uid)
+
+        if age <= 300 and msgs == 0:
+            silent_set.add(uid)
+
+        if age <= 3600 and msgs >= 20:
+            power_users_set.add(uid)
+
+    # -----------------------------------------
+    # BUILD PROFILE ANALYTICS (UNCHANGED LOGIC)
+    # -----------------------------------------
+
     for r in rows:
+
         uid = r.get("avatar_uuid")
         if not uid:
             continue
 
-        total_registered_set.add(uid)
-
         try:
             ts = float(r.get("timestamp", now))
-            msgs = int(r.get("messages", 0))
         except:
             continue
 
         age = now - ts
-
-        # Spoke in last 24 hours
-        if age <= 86400 and msgs > 0:
-            spoke_24h_set.add(uid)
-
-        # Live right now (real chat activity)
-        if age <= 120 and msgs > 0:
-            live_now_set.add(uid)
-
-        # Silent observer (HUD ping but no speech)
-        if age <= 300 and msgs == 0:
-            silent_set.add(uid)
-
-        # Power users (20+ msgs in last hour)
-        if age <= 3600 and msgs >= 20:
-            power_users_set.add(uid)
-
         w = decay(ts)
 
         p = profiles.setdefault(uid, {
@@ -348,8 +375,8 @@ def build_profiles():
     out = []
 
     for p in profiles.values():
-        m = max(p["messages"], 1)
 
+        m = max(p["messages"], 1)
         confidence = min(1.0, math.log(m + 1) / 4)
         damp = max(0.05, confidence ** 1.5)
 
@@ -369,8 +396,6 @@ def build_profiles():
 
         vibe = "Active 🔥" if p["recent"] > 3 else "Just Vibing ✨"
 
-
-        # ---------------- PRETTY PROFILE TEXT ----------------
         pretty_text = (
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🧠 SOCIAL PROFILE\n"
@@ -401,49 +426,51 @@ def build_profiles():
         out.append({
             "avatar_uuid": p["avatar_uuid"],
             "name": p["name"],
-
             "confidence": int(confidence * 100),
             "vibe": vibe,
             "recent": p["recent"],
-
             "traits": {k: int(v * 100) for k, v in traits.items()},
             "styles": {k: int(v * 100) for k, v in styles.items()},
-
             "risk": int(risk * 100),
             "club_energy": int(club * 100),
             "hangout_energy": int(hangout * 100),
-
             "summary": build_summary(confidence, traits, styles),
             "pretty_text": pretty_text
         })
 
- # CACHE EVERYTHING INSIDE THE FUNCTION
+    # -----------------------------------------
+    # CACHE RESULTS
+    # -----------------------------------------
+
     CACHE["profiles"] = out
     CACHE["ts"] = time.time()
     CACHE["platform_metrics"] = {
-    "total_registered": len(total_registered_set),
-    "spoke_24h": len(spoke_24h_set),
-    "live_now": len(live_now_set),
-    "power_users": len(power_users_set),
-    "silent_observers": len(silent_set)
-}
+        "total_registered": len(total_registered_set),
+        "spoke_24h": len(spoke_24h_set),
+        "live_now": len(live_now_set),
+        "power_users": len(power_users_set),
+        "silent_observers": len(silent_set)
+    }
 
     return out
+
 # =================================================
 # PLATFORM METRICS
 # =================================================
 
 def build_platform_metrics():
 
+    # Ensure profiles + metrics are built
     if not CACHE.get("profiles"):
         build_profiles()
 
     return CACHE.get("platform_metrics", {
-        "total_profiles": 0,
-        "active_24h": 0,
-        "huds_online": 0
+        "total_registered": 0,
+        "spoke_24h": 0,
+        "live_now": 0,
+        "power_users": 0,
+        "silent_observers": 0
     })
-
 
 # =================================================
 # ROOM VIBE HELPERS (REQUIRED)
